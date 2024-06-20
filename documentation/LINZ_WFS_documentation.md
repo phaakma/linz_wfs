@@ -5,7 +5,7 @@ Created: June 2024
 
 ## Purpose  
 This Python script simplifies the task of downloading LINZ datasets to an ArcGIS feature class, including applying changesets to an existing dataset.  
-Whilst the underlying code could be used to download data from any compatible WFS service, this script written to deliberately target the data available from the LINZ Data Service via WFS. 
+Whilst the underlying code could be used to download data from any compatible WFS service, this script is written to deliberately target the data available from the LINZ Data Service via WFS. 
 
 ## Requirements  
 1. Python >3.x environment.  
