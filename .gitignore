@@ -7,6 +7,8 @@
 /data/
 # Ignore the logs directory and its contents
 /logs/
+#Ignore the DrawIO backup files
+*.bkp 
 
 ### From the standard GitHub Python gitignore file:
 
