@@ -1,5 +1,4 @@
 ### Project specific exclusions:
-
 # Ignore the settings.json file in the root directory
 /settings.json
 # Ignore the config directory and its contents
