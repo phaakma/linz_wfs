@@ -475,47 +475,6 @@ def applyChangeset(changeset, target_dataset, id_field):
         update_geometry="UPDATE_GEOMETRY",
     )
 
-    # If versioned start an edit session
-    # if target_describe.get("isVersioned", False) is True:
-    #     logger.debug("Starting an edit session...")
-    #     editSession = arcpy.da.Editor(target_describe.get("path"))
-    #     editSession.startEditing(False, True)
-    #     editSession.startOperation()
-
-    # Open dataset being updated - Delete these records from the target dataset
-    # logger.debug("Deleting records...")
-    ## Would this be quicker if somehow a whereclause was used? Or does that not scale very well
-    ## for large numbers of records to delete? Would you have to chunk the deletes into batches
-    ## for the where_clause?
-    # with arcpy.da.UpdateCursor(target_dataset, id_field) as updateCursor:
-    #     # For each row in the dataset
-    #     for row in updateCursor:
-    #         dataset_id = row[0]
-    #         # If record is in delete list
-    #         if str(dataset_id) in delete_ids:
-    #             # Delete the record from the dataset being updated
-    #             logger.debug(f"Deleting this record: {str(dataset_id)}")
-    #             updateCursor.deleteRow()
-    # del updateCursor
-
-    # Append in all the new data from the change dataset - All records with add or update, assuming all field names are the same
-
-    # changeset_layername = "changeset_layer"
-    # where_clause = "LOWER(__change__) = 'insert' or LOWER(__change__) = 'update'"
-    # changeset_layer = arcpy.management.MakeFeatureLayer(
-    #     changeset, changeset_layername, where_clause=where_clause
-    # )
-    # count = arcpy.management.GetCount(changeset_layer)
-    # logger.debug(f"Number of records to append: {count}")
-    # arcpy.Append_management(changeset_layer, target_dataset, "NO_TEST", "", "")
-
-    # # If versioned
-    # if target_describe.get("isVersioned", False) is True:
-    #     # Stop the edit session and save the changes
-    #     logger.debug("Stopping the edit session...")
-    #     editSession.stopOperation()
-    #     editSession.stopEditing(True)
-
     logger.info(
         f"Number of rows in target after changes applied: {arcpy.management.GetCount(target_dataset)}"
     )
