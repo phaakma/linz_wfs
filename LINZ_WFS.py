@@ -16,12 +16,17 @@ logs_directory = current_dir / "logs"
 wfs_url = None
 logger = None
 from_commandline = False
+proxies = None
 
 sample_settings = {
     "api_key": "xxxxxxxxxxxxxxxxxxxxx",
     "data_directory": "",
     "logs_directory": "",
-    "config_directory": ""
+    "config_directory": "",
+    "proxies": {
+        "http": "",
+        "https": ""
+    }
 }
 
 sample_config = {
@@ -35,7 +40,7 @@ sample_config = {
 
 
 def init(config_supplied=False):
-    global wfs_url, logger, from_commandline, config_directory, data_directory, logs_directory
+    global wfs_url, logger, from_commandline, config_directory, data_directory, logs_directory, proxies
 
     # if running from commandline then the first argument will
     # be the file path. 
@@ -78,6 +83,11 @@ def init(config_supplied=False):
         logger.error("No api key found! Please update the settings.json file with a valid LINZ api key. Aborting.")
         exit(1)
     wfs_url = f"https://data.linz.govt.nz/services;key={api_key}/wfs"
+
+    # set proxies if any exist in the settings file
+    _proxies = _settings.get("proxies", None)
+    if _proxies.get("http") or _proxies.get("https"):
+        proxies = _proxies
 
     logger.debug(
         f"Script initialised **********************************************************"
@@ -297,7 +307,7 @@ def downloadWFSData(url, params, output_file):
     logger.debug(wfs_url)
     logger.debug(params)
     # Make the request and stream the response to a file
-    response = requests.get(url, params=params, stream=True)
+    response = requests.get(url, params=params, stream=True, proxies=proxies)
     with open(output_file, "wb") as f:
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
@@ -442,7 +452,6 @@ def applyChangeset(changeset, target_dataset, id_field):
 
     logger.debug(f"Number of records to delete: {len(delete_ids)}")
     delete_ids_string = ",".join(delete_ids)
-    logger.debug(delete_ids_string)
 
     where_clause = f"{id_field} in ({delete_ids_string})"
     target_layername = "target_layer"
