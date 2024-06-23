@@ -65,9 +65,19 @@ Example settings.json file. The config, data and logs values are all optional. E
     "api_key": "xxxxxxxxxxxxxxxxxxxxxx",
     "config": "C:\\linz\\config",
     "data": "",
-    "logs": ""
+    "logs": "",
+    "proxies": {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://secureproxy.example.com:8090"
+    }
 }
-```
+```  
+
+- api_key - A valid LINZ api key.  
+- config - A path to the config folder. This is where the config files for each dataset you wish to download reside. Ensure the user account running the process has read access to this folder.  
+- data - A path to the data folder. Each download will end up in a subdirectory of this folder. The raw download stream plus a staging file geodatabase for each dataset will reside under this directory. Ensure that there is enough disk space in this location to hold the staging data and/or implement cleanup processes as necessary. Ensure the user account running the process has read and write access to this folder.  
+- logs - A path to the logs folder. Logs will be written to this folder. Ensure the user account running the process has read and write access to this folder.   
+- proxies - Optional. Only use this is the server that the process is running on is required to use a forward proxy for all requests and you are required the manually route the traffic to that proxy. Otherwise you can either delete the proxies section completely from the settings file or just set each value to an empty string.  
 
 ## Configuration files  
 Configuration files define parameters for a download of a particular LINZ layer.  
@@ -79,7 +89,7 @@ Example:
         "typename": "layer-50318",
         "srsname": "EPSG:2193",
         "bbox": "1836922,5805529,1848188,5816795,EPSG:2193",
-        "cql_filter: name='Matamata Station'"
+        "cql_filter": "name='Matamata Station'"
     },
     "id_field": "id",
     "config_name": "MatamataRailStationPoint",
@@ -140,7 +150,16 @@ The most common problem would be a flaw in the configuration file causing the LI
 ### Data types  
 The WFS json data that is downloaded is a geojson FeatureCollection. The data types in this data are not strongly typed. The arcpy.conversion.JSONToFeatures GP tool is used to convert this to a feature class. This tool attempts to infer the data types but may not always get it right. E.g. integers may be interpreted as doubles.  
 The feature classes in the staging file geodatabase will always be these automatically inferred data types.  
-You can manually set up a target feature class with data types that you specify. If you specify a target for the script, it uses the standard Append GP tool with schema_type="NO_TEST" and field_mapping=None. This will attempt to match fields and will autocast where possible. But in certain cases it may fail. If this is the case, you could NOT specify a target, and instead incorporate your own ETL workflow to take either the main data layer or the changeset and apply it to a target of your choice, dictating the data typing and data mapping in that process.  
+You can manually set up a target feature class with data types that you specify. If you specify a target for the script, it uses the standard Append GP tool with schema_type="NO_TEST" and field_mapping=None. This will attempt to match fields and will autocast where possible. But in certain cases it may fail. If this is the case, you could NOT specify a target, and instead incorporate your own ETL workflow to take either the main data layer or the changeset and apply it to a target of your choice, dictating the data typing and data mapping in that process. 
+A good approach can be to use the LINZ LDS website to export and manually download a file geodatabase, and then use this as the basis for your final target feature class. This will ensure your target matches the data types that LINZ define.   
+
+### Large datasets  
+Most LINZ datasets can usually be downloaded fine using this script, but for very large datasets such as NZ Property TItles, if the data stream gets interupted at any point whilst downloading then you would have to start the process again.   
+An alternate approach could be to perform an initial download using the script and a configuration that filters out most records. It only requires 1 record in order to create the local staging file geodatabase and feature class. For example, for the NZ Property Titles, include a cql_filter "id=123456" where the id is any single title. Once the staging file geodatabase and feature class is created, manually delete any records so it is a blank feature class. Next, manually download a full copy of the LINZ LDS website using the Export tool to get a file geodatabase. Manually append the data from this into the feature class in the staging file geodatabase. You now have a starting point. To use changesets from then on, just ensure that the datetime value in the _last_update.json file for this data set is at or even slightly before the time that you requested the manual download.  
+
+### Clean up of old download files  
+The script does not do any clean up of old download files. This is deliberate as user's use cases will differ - some may want to retain them forever, others may have disk storage constraints and want to only keep the last few, or you may want to implement some backup workflow to zip the json files up to store them elsewhere (being text files, zipping the files does save a lot of space). 
+It is up to you to implement the workflow of your choice to clean up old download files.  
 
 ### Differences to existing WFSDownload python script  
 There is an existing python script that has been around since 2015 and is widely used still. If you use this and it meets your needs then there is no need to change it to this script. This script was created mainly because the author preferred a different structure to the downloaded data and took the opportunity to use some newer or different methods and also to write up this documentation to help users understand the workflow and to implement.  
