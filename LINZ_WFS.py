@@ -606,8 +606,10 @@ def main(*args, **kwargs):
     if is_changeset:
         if not last_updated_file.exists():
             logger.error(
-                f"Processing a changeset requires knowing a date to retrieve changes from. This is fetched from the '_last_updated.json' file in the data directory. Either run this script downloading the full layer data once first, or manually create the '_last_updated.json' file so it knows the time range to query."
+                f"Processing a changeset requires knowing a date to retrieve changes from. This is fetched from the '_last_updated.json' file in the data directory. Creating a new _last_updated.json file now, please update the datetime in it if necessary."
             )
+            with open(last_updated_file, "w") as file:
+                json.dump({"last_updated": f"{datetime.utcnow().isoformat()}Z"}, file)
             exit(1)
         else:
             with open(last_updated_file, "r") as file:
