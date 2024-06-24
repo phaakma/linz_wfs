@@ -20,6 +20,9 @@ Whilst the underlying code could be used to download data from any compatible WF
 2. Run the script once (either from the batch file or by running the python file directly) and it will create any missing directories, create a settings.json file if it doesn't exist and create a sample config file in the config directory.  
 3. Update the API key in the settings.json file.
 4. Optionally, specify paths for config, data and logs.
+5. Create a config file for the layer you want.  
+
+> NOTE: Read the Target Feature Class section below for the recommended workflow for setting up a target feature class.  
 
 ### Smoketest  
 1. Run "LINZ_WFS.bat sample.json".  
@@ -85,23 +88,22 @@ Configuration files define parameters for a download of a particular LINZ layer.
 Example:
 ```
 {
+    "id_field": "id",
+    "config_name": "MatamataRailStationPoint",
+    "target_feature_class": "L:\\LINZ\\data\\LINZ.gdb\\nzproperties",
+    "cql_filter": "land_district='Otago'",
     "wfs_request_params": {
         "typename": "layer-50318",
         "srsname": "EPSG:2193",
         "bbox": "1836922,5805529,1848188,5816795,EPSG:2193",
         "cql_filter": "name='Matamata Station'"
-    },
-    "id_field": "id",
-    "config_name": "MatamataRailStationPoint",
-    "target_feature_class": "L:\\LINZ\\data\\LINZ.gdb\\nzproperties",
-    "cql_filter": "land_district='Otago'"
+    }
 }
 ```
 
 - id_field - Every LINZ layer has a unique id field. This field is important because the changeset logic relies on using this to work out which records to update. You should verify this via the metadata available for the layer at the LINZ LDS website and specify it here.  
-- config_name - This is a user friendly title you choose for this configuration. It may be used as a folder or feature class name, so you may notice it updated to be suitable. As a general good practice, **avoid** special characters, starting with digits or using spaces.
+- config_name - This is a user friendly title you choose for this configuration. It may be used as a folder or feature class name, so you may notice it updated by the script (slugified) to be suitable. As a general good practice, **avoid** special characters, starting with digits or using spaces.
 - target_feature_class - Optional. If specified, once the script has finished downloading and processing to the staging.gdb file geodatabase, it will then also update this target_feature_class. Refer the section "Target Feature Class".  
-
 
 The **"wfs_request_parameters"** section contains the parameters that will be passed through to the LINZ WFS web service to request the download.  
 > NOTE: Yes, you can research what other available parameters would work and experiment with adding them here.  
@@ -116,14 +118,16 @@ The **"wfs_request_parameters"** section contains the parameters that will be pa
 
 ## Target Feature Class  
 The configuration file being called can optionally include a "target_feature_class" value which should be the full path to a feature class in either a file geodatabase or an enterprise geodatabase.  
-If this is not included, then the script will end after it finishes downloading the data and applying to the staging gdb file geodatabase. 
+If this is not included, then the script will end after it finishes downloading the data and converting it to a feature class in the staging gdb file geodatabase. 
 However, if a target is specified, it will also attempt to apply the update to this target feature class. This target can be in another file geodatabase or an enterprise geodatabase. If it is an enterprise geodatabase, then the path must include the sde file, and the sde file will determine the credentials (and optionally the version) used.  
 The logic used for updating the target is fairly straight forward:
-- If the download is a full download, then the script will truncate the target and append all data back in. 
+- If the download is a full download (i.e. doesn't have 'changeset' in the layer id/typename), then the script will truncate the target and append all data back in. 
 > **Warning**: If the target is versioned or has attachments enabled, then it will use arcpy.management.DeleteRows instead of arcpy.management.TruncateTable. DeleteRows is much slower than TruncateTable, and therefore this should be avoided if possible. In this case, downloading changesets is the recommended workflow.  
 - If the download is a changeset, then the script first deletes records in the target that have been tagged for deletion, then performs and upsert using the arcpy.management.Append tool, specifying the match field as the LINZ id field.  
 
 This workflow is suitable for most cases. But if you have more complex requirements, you could choose to not specify a target and just let the script populate the feature classes in the staging file geodatabase. Then you could create your own workflow to pull either the newly updated main feature class or the changeset feature class from the staging.gdb into your target. This could be achieved using other python scripts, FME or other ETL tool of your choice.  
+
+> NOTE: The recommended workflow to create your target feature class is to manually visit https://data.linz.govt.nz and use the export tools to download a copy of the data as a file geodatabase. This will give you a full snapshot of the data at that point in time in a feature class using the LINZ specified field types. Copy this feature class to the file geodatabase or enterprise geodatabase where you want the final data to reside.  
 
 ## Changesets  
 LINZ provides a changeset service for each layer. Each layer has an id, for example the NZ Property Titles is 50804. To download the full data for that layer you would use "layer-50804" in the configuration file. However, you can instead download the changeset by adding the suffix "-changeset", e.g. "layer-50804-changeset".  
@@ -142,20 +146,34 @@ The typical workflow for setting up to use a changeset would look like this:
 
 At any time in the future, you can manually the the full layer download configuration file and it will delete the existing full data layer and recreate it. Then you can resume using the changeset configuration.  
 
+> NOTE: If you manually download the intial full download and intend to use changesets moving forward, you will need to manually create the _last_updated.json file for the initial run. Set the datetime to either the time you manually downloaded the data. 
+
 ## FAQ, Use Cases and Considerations  
 
 ### Troubleshooting  
-The most common problem would be a flaw in the configuration file causing the LINZ WFS service to send an error message rather than the geojson data. Since this response is stream directly to the layer data directory as a json file, try opening up that json file to see what is in it. If it is an xml type response, look for error messages in it to help troubleshoot further.  
+The most common problem would be a flaw in the configuration file causing the LINZ WFS service to send an error message rather than the geojson data. Since this response is streamed directly to the layer data directory as a json file, try opening up that json file to see what is in it. If it is an xml type response, look for error messages in it to help troubleshoot further.  
 
 ### Data types  
 The WFS json data that is downloaded is a geojson FeatureCollection. The data types in this data are not strongly typed. The arcpy.conversion.JSONToFeatures GP tool is used to convert this to a feature class. This tool attempts to infer the data types but may not always get it right. E.g. integers may be interpreted as doubles.  
 The feature classes in the staging file geodatabase will always be these automatically inferred data types.  
-You can manually set up a target feature class with data types that you specify. If you specify a target for the script, it uses the standard Append GP tool with schema_type="NO_TEST" and field_mapping=None. This will attempt to match fields and will autocast where possible. But in certain cases it may fail. If this is the case, you could NOT specify a target, and instead incorporate your own ETL workflow to take either the main data layer or the changeset and apply it to a target of your choice, dictating the data typing and data mapping in that process. 
-A good approach can be to use the LINZ LDS website to export and manually download a file geodatabase, and then use this as the basis for your final target feature class. This will ensure your target matches the data types that LINZ define.   
+This is one key reason why you should manually set up the target feature class. If you specify a target for the script, it uses the standard Append GP tool with schema_type="NO_TEST" and field_mapping=None. This will attempt to match fields and will autocast where possible. But in certain cases it may fail. If this is the case, you could NOT specify a target, and instead incorporate your own ETL workflow to take either the main data layer or the changeset from the staging gdb and apply it to a target of your choice, dictating the data typing and data mapping in that process. 
+The recommended approach can be to use the LINZ LDS website to export and manually download a file geodatabase, and then use this as the basis for your final target feature class. This will ensure your target matches the data types that LINZ define.   
+
+> Can the intial download be scripted? In theory yes, there is an API for creating and downloading exports. However, at the time of writing there seems to be a bug in the API, where if using an API key it treats the POST request to create an export as a GET request which doesn't work. If this is resolved in the future I may look at automating that initial download into this script. However, keep in mind that if your final target needs to reside in a specific location such as an enterprise geodatabase, you will always need to manually set up that target anyway. Also, generating the initial export of a large dataset such as Property Titles is a server intensive task that can take a long time, and there is an argument to be made that manually performing this step is better than automating it. Automation can lead to inadvertant overuse which would impact LINZ systems and is not desirable.  
+
+### Indexes  
+It is recommended to create an attribute index on the identifier field in your target feature class.  
 
 ### Large datasets  
 Most LINZ datasets can usually be downloaded fine using this script, but for very large datasets such as NZ Property TItles, if the data stream gets interupted at any point whilst downloading then you would have to start the process again.   
-An alternate approach could be to perform an initial download using the script and a configuration that filters out most records. It only requires 1 record in order to create the local staging file geodatabase and feature class. For example, for the NZ Property Titles, include a cql_filter "id=123456" where the id is any single title. Once the staging file geodatabase and feature class is created, manually delete any records so it is a blank feature class. Next, manually download a full copy of the LINZ LDS website using the Export tool to get a file geodatabase. Manually append the data from this into the feature class in the staging file geodatabase. You now have a starting point. To use changesets from then on, just ensure that the datetime value in the _last_update.json file for this data set is at or even slightly before the time that you requested the manual download.  
+The recommended approach is to manually export the intial data, and then use this script for just the changesets moving forward.    
+> NOTE: Versioning your target dataset for large datasets is not recommended.  
+
+### What if my dataset drifts out of sync with LINZ?  
+For small datasets, using the changesets might not be justified. Just download the entire dataset each time.  
+For large datasets with lots of changes, you may find it out of sync with LINZ. This could be because the script failed occasionally due to issues such as network conditions, disk space, RAM, outages and all sorts of other things outside of your control. If you suspect this is the case, you have a couple of options.  
+1. Start afresh. Usually the best way and recommended to do periodically anyway (perhaps annually or more depending on your use case).  
+2. Run a brute change detection process between a clean copy and your target feature class. You might choose to do this if your target is versioned and a full delete/append is not desirable. There are Python scripts and FME tools that can do this sort of comparison.
 
 ### Clean up of old download files  
 The script does not do any clean up of old download files. This is deliberate as user's use cases will differ - some may want to retain them forever, others may have disk storage constraints and want to only keep the last few, or you may want to implement some backup workflow to zip the json files up to store them elsewhere (being text files, zipping the files does save a lot of space). 
