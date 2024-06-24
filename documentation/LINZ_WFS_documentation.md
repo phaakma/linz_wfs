@@ -137,12 +137,14 @@ The key part here is something that the script does behind the scenes. A changes
 {"last_updated": "2024-06-20T01:31:30.245Z"}
 ```
 If this file does not exist when a full layer download is requested then it is created and the datetime is set to the time of the download. If this file exists when another full layer download is requested then it is overwritten with new details.  
-If this file does not exist when a changeset download is requested then the script aborts as it does not know when to start. If this file exists, the datetime is read in, used as the "from" datetime to request changes and then the file is overwritten with the datetime of this download.  
+If this file does not exist when a changeset download is requested then the script creates the file using the current datetime then aborts as there was no start time to query.  
+If this file exists, the datetime is read in, used as the "from" datetime to request changes and then the file is overwritten with the datetime of this download.  
 The typical workflow for setting up to use a changeset would look like this:
-1. Create a configuration file that downloads the full layer.
-2. Run the script once manually using this configuration file.
-3. Create a second configuration file that downloads the changeset for that layer.
-4. Schedule a task to run using this changeset configuration file periodically.  
+1. Manually download a full copy of the data using the export tool from the LINZ website.
+2. Manually copy this downloaded feature class to a target location of your choice.
+3. Create a configuration file that downloads the changeset for that layer. Specify the target location.
+4. Run that configuration file once. It will create the staging data folder and create a new _last_updated.json file with now as the datetime. Manually adjust the datetime in this file if necessary (i.e. your export was generated earlier so you need to backdate this.)
+5. Schedule a task to run using this changeset configuration file.  
 
 At any time in the future, you can manually the the full layer download configuration file and it will delete the existing full data layer and recreate it. Then you can resume using the changeset configuration.  
 
@@ -157,7 +159,7 @@ The most common problem would be a flaw in the configuration file causing the LI
 The WFS json data that is downloaded is a geojson FeatureCollection. The data types in this data are not strongly typed. The arcpy.conversion.JSONToFeatures GP tool is used to convert this to a feature class. This tool attempts to infer the data types but may not always get it right. E.g. integers may be interpreted as doubles.  
 The feature classes in the staging file geodatabase will always be these automatically inferred data types.  
 This is one key reason why you should manually set up the target feature class. If you specify a target for the script, it uses the standard Append GP tool with schema_type="NO_TEST" and field_mapping=None. This will attempt to match fields and will autocast where possible. But in certain cases it may fail. If this is the case, you could NOT specify a target, and instead incorporate your own ETL workflow to take either the main data layer or the changeset from the staging gdb and apply it to a target of your choice, dictating the data typing and data mapping in that process. 
-The recommended approach can be to use the LINZ LDS website to export and manually download a file geodatabase, and then use this as the basis for your final target feature class. This will ensure your target matches the data types that LINZ define.   
+The recommended approach is to use the LINZ LDS website to export and manually download a file geodatabase, and then use this as the basis for your final target feature class. This will ensure your target matches the data types that LINZ define.   
 
 > Can the intial download be scripted? In theory yes, there is an API for creating and downloading exports. However, at the time of writing there seems to be a bug in the API, where if using an API key it treats the POST request to create an export as a GET request which doesn't work. If this is resolved in the future I may look at automating that initial download into this script. However, keep in mind that if your final target needs to reside in a specific location such as an enterprise geodatabase, you will always need to manually set up that target anyway. Also, generating the initial export of a large dataset such as Property Titles is a server intensive task that can take a long time, and there is an argument to be made that manually performing this step is better than automating it. Automation can lead to inadvertant overuse which would impact LINZ systems and is not desirable.  
 
