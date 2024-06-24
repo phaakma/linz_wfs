@@ -23,19 +23,13 @@ sample_settings = {
     "data_directory": "",
     "logs_directory": "",
     "config_directory": "",
-    "proxies": {
-        "http": "",
-        "https": ""
-    }
+    "proxies": {"http": "", "https": ""},
 }
 
 sample_config = {
-    "wfs_request_params": {
-        "typename": "layer-50318",
-        "srsname": "EPSG:2193"
-    },
+    "wfs_request_params": {"typename": "layer-50318", "srsname": "EPSG:2193"},
     "id_field": "t50_fid",
-    "config_name": "AllNZRailStationPoints"
+    "config_name": "AllNZRailStationPoints",
 }
 
 
@@ -43,7 +37,7 @@ def init(config_supplied=False):
     global wfs_url, logger, from_commandline, config_directory, data_directory, logs_directory, proxies
 
     # if running from commandline then the first argument will
-    # be the file path. 
+    # be the file path.
     script_path = Path(__file__).resolve()
     script_dir = script_path.parent
     arg_script_path = Path(str(sys.argv[0])).resolve()
@@ -54,12 +48,14 @@ def init(config_supplied=False):
         with open(settings_file, "r") as file:
             _settings = json.load(file)
     else:
-        with settings_file.open('w') as file:
+        with settings_file.open("w") as file:
             json.dump(sample_settings, file, indent=4)
 
     # set up logging before anything else
     _logs_directory = _settings.get("logs", None)
-    logs_directory = Path(_logs_directory) if _logs_directory is not None else logs_directory
+    logs_directory = (
+        Path(_logs_directory) if _logs_directory is not None else logs_directory
+    )
     logger = configureLogging()
     logging_level = _settings.get("logging_level", logging.DEBUG)
     logger.setLevel(logging_level)
@@ -67,20 +63,26 @@ def init(config_supplied=False):
     _config_directory = _settings.get("config", None)
     _data_directory = _settings.get("data", None)
 
-    config_directory = Path(_config_directory) if _config_directory is not None else config_directory
-    data_directory = Path(_data_directory) if _data_directory is not None else data_directory
+    config_directory = (
+        Path(_config_directory) if _config_directory is not None else config_directory
+    )
+    data_directory = (
+        Path(_data_directory) if _data_directory is not None else data_directory
+    )
     ensure_folder(config_directory)
-    ensure_folder(data_directory) 
+    ensure_folder(data_directory)
 
     # create a sample file if it doesn't exist
     _sample_config_file = config_directory / "sample.json"
     if not _sample_config_file.exists():
-        with _sample_config_file.open('w') as file:
+        with _sample_config_file.open("w") as file:
             json.dump(sample_config, file, indent=4)
 
     api_key = _settings.get("api_key", None)
     if api_key is None:
-        logger.error("No api key found! Please update the settings.json file with a valid LINZ api key. Aborting.")
+        logger.error(
+            "No api key found! Please update the settings.json file with a valid LINZ api key. Aborting."
+        )
         exit(1)
     wfs_url = f"https://data.linz.govt.nz/services;key={api_key}/wfs"
 
@@ -89,12 +91,11 @@ def init(config_supplied=False):
     if _proxies.get("http") or _proxies.get("https"):
         proxies = _proxies
 
+    logger.debug("...")
     logger.debug(
         f"Script initialised **********************************************************"
     )
     return
-
-
 
 
 def ensure_folder(folder):
@@ -122,7 +123,6 @@ class ArcpyHandler(logging.Handler):
 
 
 def configureLogging():
-
 
     ensure_folder(logs_directory)
     # If the log file exists and is larger than 10MB
@@ -320,7 +320,9 @@ def downloadWFSData(url, params, output_file):
         del data["features"]
         logger.debug(f"Timestamp of downloaded data: {data.get('timeStamp', None)}")
     except JSONDecodeError as jErr:
-        logger.error(f"Error encountered parsing the downloaded data. Check the download file for error messages.")
+        logger.error(
+            f"Error encountered parsing the downloaded data. Check the download file for error messages."
+        )
         logger.error(jErr)
         exit(1)
     return data
@@ -357,14 +359,21 @@ def convertJsonToFGB(layer_data_directory, json_file, layer, id_field):
     if not arcpy.Exists(str(fgb)):
         logger.debug("Staging file geodatabase didn't exist, creating it now.")
         arcpy.management.CreateFileGDB(str(layer_data_directory), fgb_name)
+    else:
+        # Compact the file geodatabase to give best performance for upcoming edits.
+        arcpy.management.Compact(str(fgb))
 
-    # # delete feature class if it already exists.
-    if arcpy.Exists(str(fc)):
-        logger.debug(f"Feature class already exists, deleting now: {str(fc)}")
-        arcpy.management.Delete(str(fc))
-
-    # # convert json file into feature class.
-    arcpy.conversion.JSONToFeatures(in_json_file=str(json_file), out_features=str(fc))
+    # convert json file into feature class.
+    # The environment variables force no Z or M values
+    # which can slow down later processing.
+    with arcpy.EnvManager(
+        outputZFlag="Disabled",
+        outputMFlag="Disabled",
+        overwriteOutput=True
+    ):
+        arcpy.conversion.JSONToFeatures(
+            in_json_file=str(json_file), out_features=str(fc)
+        )
 
     # The GP tool interprets the integer identifier field as a double. This makes
     # later analysis difficult. Here we add our own integer id field and populate it.
@@ -408,8 +417,8 @@ def convertJsonToFGB(layer_data_directory, json_file, layer, id_field):
     arcpy.management.AddIndex(
         in_table=str(fc),
         fields=id_field,
-        index_name="id_idx",
-        unique="NON_UNIQUE",
+        index_name="id_idx2",
+        unique="UNIQUE",
         ascending="NON_ASCENDING",
     )
     arcpy.management.CalculateField(
@@ -436,21 +445,52 @@ def applyChangeset(changeset, target_dataset, id_field):
     changeset = str(changeset)
     target_dataset = str(target_dataset)
 
-    logger.debug(f"Applying this changeset: {str(changeset)}")
-    logger.debug(f"Applying changeset to: {str(target_dataset)}")
+    count_changeset = arcpy.management.GetCount(changeset)
+    count_target = arcpy.management.GetCount(target_dataset)
 
-    target_describe = arcpy.da.Describe(target_dataset)
+    logger.info(f"Applying {count_changeset} changes from: {changeset}")
+    logger.info(f"Applying changeset to: {target_dataset}")
+    logger.info(f"Number of rows in target before applying changes: {count_target}")
+
+    changeset_layername = "changeset_layer"
+    changeset_layer = arcpy.management.MakeFeatureLayer(changeset, changeset_layername)
+
+    # Get counts of inserts, updates and deletes. This has no functional purpose but
+    # is helpful for troubleshooting.
+
+    result = arcpy.management.SelectLayerByAttribute(
+        changeset_layername,
+        selection_type="NEW_SELECTION",
+        where_clause="__change__ = 'INSERT'",
+    )
+    count_inserts = result.getOutput(1)
+    logger.debug(f"Number of INSERT from the changeset: {count_inserts}")
+    result = arcpy.management.SelectLayerByAttribute(
+        changeset_layername,
+        selection_type="NEW_SELECTION",
+        where_clause="__change__ = 'UPDATE'",
+    )
+    count_updates = result.getOutput(1)
+    logger.debug(f"Number of UPDATE from the changeset: {count_updates}")
+    result = arcpy.management.SelectLayerByAttribute(
+        changeset_layername,
+        selection_type="NEW_SELECTION",
+        where_clause="__change__ = 'DELETE'",
+    )
+    count_deletes = result.getOutput(1)
+    logger.debug(f"Number of DELETE from the changeset: {count_deletes}")
+    arcpy.Delete_management(changeset_layer)
+
     fields = [id_field]
-    # Open change dataset - Find records to be deleted
-    logger.debug("Identifying records to be deleted...")
     where_clause = "LOWER(__change__) = 'delete'"
-
     delete_ids = [
         str(row[0])
         for row in arcpy.da.SearchCursor(changeset, fields, where_clause=where_clause)
     ]
 
-    logger.debug(f"Number of records to delete: {len(delete_ids)}")
+    logger.debug(
+        f"Number of records to delete calculated from list of ids: {len(delete_ids)}"
+    )
     delete_ids_string = ",".join(delete_ids)
 
     where_clause = f"{id_field} in ({delete_ids_string})"
@@ -459,9 +499,8 @@ def applyChangeset(changeset, target_dataset, id_field):
         target_dataset, target_layername, where_clause=where_clause
     )
 
-    # TODO: if the target is versioned, does DeleteRows GP tool allow for this?
     arcpy.management.DeleteRows(target_layer)
-    del target_layer
+    arcpy.Delete_management(target_layer)
 
     logger.debug("Inserting and updating records...")
     arcpy.management.Append(
@@ -485,8 +524,8 @@ def updateTarget(source_feature_class, target_dataset, is_changeset, id_field):
     logger.debug(f"Updating specified target: {target_dataset}")
     if not arcpy.Exists(target_dataset):
         logger.error(f"Target dataset does not exist. Skipping update.")
-        return 
-    
+        return
+
     if is_changeset:
         logger.debug(f"Applying changeset.")
         applyChangeset(
@@ -524,18 +563,21 @@ def updateTarget(source_feature_class, target_dataset, is_changeset, id_field):
             inputs=str(source_feature_class),
             target=str(target_dataset),
             schema_type="NO_TEST",
-            field_mapping=None
+            field_mapping=None,
         )
         logger.info(f"Finished updating target dataset.")
 
 
 @timing_decorator
 def main(*args, **kwargs):
-    
 
     # Ensure we have a configuration file
     config_filename = arcpy.GetParameterAsText(0)
-    config_filename = config_filename if config_filename is not None and config_filename.strip() != "" else None
+    config_filename = (
+        config_filename
+        if config_filename is not None and config_filename.strip() != ""
+        else None
+    )
     init(config_filename)
 
     if config_filename is None:
@@ -572,6 +614,7 @@ def main(*args, **kwargs):
                 last_updated_data = json.load(file)
                 changes_from = last_updated_data.get("last_updated", None)
         changes_to = f"{datetime.utcnow().isoformat()}Z"
+        logger.debug(f"Changes date range (UTC): from:{changes_from};to:{changes_to}")
         params["wfs_request_params"][
             "viewparams"
         ] = f"from:{changes_from};to:{changes_to}"
@@ -599,18 +642,22 @@ def main(*args, **kwargs):
         )
 
         # Apply the changes from the changeset to the staging data
-        if is_changeset:
-            staging_fc = str(feature_class)[: -len("-changeset")]
-            if arcpy.Exists(staging_fc):
-                applyChangeset(
-                    changeset=feature_class,
-                    target_dataset=staging_fc,
-                    id_field=params["id_field"],
-                )
-            else:
-                logger.warning(
-                    f"Staging fc does not exist to apply changeset to. Skipping this step."
-                )
+        # Disabled this flow for now. Using the auto generated 
+        # feature class from the json to features GP tool was causing
+        # issues. 
+
+        # if is_changeset:
+        #     staging_fc = str(feature_class)[: -len("-changeset")]
+        #     if arcpy.Exists(staging_fc):
+        #         applyChangeset(
+        #             changeset=feature_class,
+        #             target_dataset=staging_fc,
+        #             id_field=params["id_field"],
+        #         )
+        #     else:
+        #         logger.warning(
+        #             f"Staging fc does not exist to apply changeset to. Skipping this step."
+        #         )
 
         # Apply new data to target_feature_class
         target_feature_class = params.get("target_feature_class", None)
@@ -621,6 +668,8 @@ def main(*args, **kwargs):
                 is_changeset=is_changeset,
                 id_field=params["id_field"],
             )
+        else:
+            logger.info(f"No target specified. Downloaded data is available in the staging.gdb")
 
     # Update the "_last_updated.json" file
     download_timestamp = download_details.get("timeStamp", None)
