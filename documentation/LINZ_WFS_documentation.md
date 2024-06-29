@@ -114,15 +114,30 @@ Example:
 - retain_after_purge - refer to section below on the --purge option.
 - initial_buffer - refer to section below on Extent.  
 
-## Extent  
-The initial run will create a staging.gdb file geodatabase in the data configuration directory, and will create a polygon feature class in it called "extent". The feature class will be in NZTM and have a field called "label".  
+## Extent and Filters   
+You can provide an extent and/or filters to narrow down the final output. Since we are using a combination of the LINZ Export API and WFS, there are some nuances to setting these up. The main one being to ensure you include both a sql and a cql filter in the config.json if you wish to filter by attribute. See below for more information.  
+
+### Extent
+The initial run will create a staging.gdb file geodatabase in the data configuration directory, and will create a polygon feature class in it called "extent". The feature class will be in NZTM.  
 Use of this is optional. If no extent is created, then any download or changeset request will not apply any spatial filtering.  
-If you want to filter the data spatially, insert one record into this extent feature class. This can be any polygon shape.  
+If you want to filter the data spatially, insert one record into this extent feature class.
 
-If a crop geometry is provided for a full data export then the LINZ API literally crops any features. This is not desirable, for example it may result in clipped property title records where the geometry does not match LINZ. To get around this, during a full download, the extent geometry is buffered by the initial_buffer amount (defaults to 1000 meters) and the extent of that used, then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted.  
+If a crop geometry is provided for a full data export then the LINZ API literally crops any features. This is not always desirable, for example it may result in clipped property title geometries which could be confusing. To get around this, during a full download, the extent geometry is buffered by the initial_buffer amount (defaults to 1000 meters) and the extent of that used, then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted. The 1000m buffer works most of the time, but in some fringe cases with extremely large polygons such as national parks this buffer will not be enough. If you know this to be the case, it is recommended to adjust your extent polygon to capture known areas. Otherwise you can also increase the initial_buffer size in the config.json.  
 
-The LINZ WFS API works differently in that if a BBOX is specified it performs and intersect instead of cropping. The extent of the geometry is used as the BBOX, and then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted. 
-> NOTE: The LINZ WFS API can't take both a cql_filter and a BBOX together. If a cql_filter is provided, then the BBOX option is not used for the WFS request. However, the downloaded data is still compared against the extent geometry and anything not intersecting is deleted.  
+The LINZ WFS API works differently in that if a BBOX is specified it performs and intersect instead of cropping. The extent of the geometry is used as the BBOX, and then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted.  
+
+### SQL Filters
+The Export API doesn't appear to have an option for an attribute filter, only the extent crop. This means that the initial exported file geodatabase **always** includes all records within the extent. The WFS API accepts CQL and OGC filters, but cannot accept both a BBOX and a CQL filter at the same time. OGC filters are XML based. All this makes it hard to define one filter that can used in all requests and also easily converted to SQL for use in ArcPy if necessary too.    
+
+This script takes a simple approach: any extent provided is used in the requests, then if a "sql_filter" is provided in the config.json, then once the data (both full downloads and changesets) is copied to the staging file geodatabase, a select is performed using the sql filter and anything not matching that expression is deleted. This SQL expression should be a valid expression that ArcPy can run on the data. 
+
+Admittedly, this means the WFS request may download slightly more data that necessary. For example, if you just wanted Freehold titles for the entire country, you end up downloading all titles each time and then discarding the ones you don't need. If you prefer, the script does cater for using a CQL filter in the config.json. If you provide a "cql_filter" expression in the config.json file, the WFS request will use that **instead** of the BBOX for the request. If there is an extent geometry then the downloaded data will still be spatially filtered by that geometry afterwards. This approach may or may not be more efficient for your use case. E.g. from the previous example, you could use a CQL filter to download all Freehold properties for the entire country, and then any not intersecting your extent geometry would be deleted. 
+If you provide a "cql_filter" then you should also provide an equivalent "sql_filter" too.   
+
+> In practice, changesets are usually relatively small no matter which approach you take, which is why the simplified approach of just using the SQL filter is usually sufficient.  
+
+> More info on ECQL can be found here:    
+[GeoServer ECQL Reference](https://docs.geoserver.org/stable/en/user/filter/ecql_reference.html)  
 
 ## Target Feature Class  
 The configuration file can optionally include a "target_feature_class" value which should be the full path to a feature class in either a file geodatabase or an enterprise geodatabase.  
@@ -242,7 +257,3 @@ Your choice. Use the tools you have available and are most comfortable with. Tho
 
 ### What if I don't have ArcGIS?  
 This script was written with ArcGIS users in mind and relies on having ArcPy. Having said that, a lot of the code doesn't actually require ArcPy, such as the actual downloading the raw geojson data, so feel free to dive into the code and extract out any parts that may be useful elsewhere.  
-
-## Process Diagram  
-
-![Initial Download](process_diagram.svg)

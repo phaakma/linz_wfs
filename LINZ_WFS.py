@@ -49,6 +49,7 @@ last_updated_datetime = None
 params = None
 extent_featureclass = None
 extent_geometry = None
+sql_filter = None
 initial_buffer = 1000
 staging_fgb_name = "staging.gdb"
 target_feature_class = None
@@ -130,6 +131,7 @@ def init(is_first_setup=False):
             "layer_id": layer_id,
             "wkid": _wkid,
             "id_field": id_field,
+            "sql_filter": None,
             "target_feature_class": None,
             "retain_after_purge": 5,
             "initial_buffer": 1000,
@@ -303,7 +305,7 @@ def loadConfiguration():
     Load configuration from file.
     """
     logger.debug(f"Loading configuration from: {config_file}")
-    global params, layer_id, poll_interval, max_polling_time
+    global params, layer_id, poll_interval, max_polling_time, sql_filter
     global retain_after_purge, id_field, target_feature_class, initial_buffer
 
     with open(config_file, "r") as file:
@@ -326,9 +328,17 @@ def loadConfiguration():
     max_polling_time = data.get("max_polling_time", max_polling_time)
     target_feature_class = data.get("target_feature_class", None)
     logger.info(f"target_feature_class: {target_feature_class}")
-    cql_filter = data.get("cql_filter", None)
+
     retain_after_purge = data.get("retain_after_purge", retain_after_purge)
     initial_buffer = data.get("initial_buffer", initial_buffer)
+    bbox_string = None
+    sql_filter = data.get("sql_filter", None)
+    cql_filter = data.get("cql_filter", None)
+    if cql_filter is None:
+        ## cql_filter and bbox cannot be used together.
+        getExtentGeometry()
+        if extent_geometry is not None:        
+            bbox_string = geometryToBboxString(extent_geometry)        
 
     params = {
         "service": "WFS",
@@ -338,15 +348,10 @@ def loadConfiguration():
         "srsname": f"EPSG:{wkid}",
         "outputFormat": "json",
         "cql_filter": cql_filter,
+        "bbox": bbox_string,
     }
 
-    if cql_filter is None:
-        getExtentGeometry()
-        if extent_geometry is not None:
-            ## cql_filter and bbox cannot be used together.
-            bbox_string = geometryToBboxString(extent_geometry)
-            params["bbox"] = bbox_string
-    return
+    return params
 
 
 def getExtentGeometry():
@@ -527,7 +532,9 @@ def download_export(export_id):
                 logger.debug(f"Polling successful. State: {state}")
                 break
             else:
-                logger.debug(f"Polling attempt: {attempt}, Progress: {progress}, State: {state}")
+                logger.debug(
+                    f"Polling attempt: {attempt}, Progress: {progress}, State: {state}"
+                )
         except ValueError as e:
             logger.error(f"Error parsing polling JSON: {e}")
             break
@@ -602,10 +609,12 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
     """
     Delete all features in the given feature class that
     don't intersect the extent.
-    """
+    """    
     getExtentGeometry()
     if extent_geometry is None:
         return
+
+    logger.debug(f"Deleting all feature that don't intersect the extent")
     lyr = arcpy.management.MakeFeatureLayer(
         in_features=str(feature_class), out_layer="temp_layer"
     )
@@ -613,7 +622,26 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
         lyr,
         overlap_type="INTERSECT",
         select_features=extent_featureclass,
-        invert_spatial_relationship="INVERT",
+        invert_spatial_relationship="INVERT"
+    )
+    arcpy.management.DeleteRows(lyr)
+    arcpy.Delete_management(lyr)
+    return
+
+
+def deleteFeaturesNotMatchingSQL(feature_class):
+    """
+    Delete all features in the given feature class that
+    don't match the given SQL where_clause.
+    """
+    if sql_filter is None:
+        return
+    logger.debug(f"Deleting all features that don't match the given SQL expression")
+    lyr = arcpy.management.MakeFeatureLayer(
+        in_features=str(feature_class), out_layer="temp_layer"
+    )
+    arcpy.management.SelectLayerByAttribute(
+        in_layer_or_view=lyr, where_clause=sql_filter, invert_where_clause="INVERT"
     )
     arcpy.management.DeleteRows(lyr)
     arcpy.Delete_management(lyr)
@@ -676,7 +704,7 @@ def downloadChangeSet():
         if int(data.get("numberReturned", 0)) == 0:
             logger.info(
                 "There were no features in the download. Skipping applying any updates."
-            )            
+            )
             return None
         del data
         logger.debug(f"Timestamp of downloaded data: {last_updated_datetime}")
@@ -722,7 +750,7 @@ def convertJsonToFGB(json_file):
 
 
 def convertIdFieldToInteger(fc):
-    """ 
+    """
     LINZ primary key fields are listed on their website as integer,
     but in the exported file geodatabase are sometimes double.
     Also, the conversion from geojson to feature class interprets the number
@@ -730,26 +758,30 @@ def convertIdFieldToInteger(fc):
     This function converts a field to an integer data type.
     Without doing this, the upsert process doesn't correctly match
     identifiers.
-    """ 
+    """
     logger.info(f"Converting {id_field} to integer type in {fc}")
     fc = str(fc)
     fields = [f for f in arcpy.ListFields(fc) if f.name == id_field]
-    if len(fields)==0:
+    if len(fields) == 0:
         logger.warning(f"Could not find {id_field} in {fc}")
         return
     field = fields[0]
     if field.type not in ("Double", "Float", "Integer", "SmallInteger"):
-        logger.warning(f"{id_field} not a number field in {fc}, cannot convert to integer")
+        logger.warning(
+            f"{id_field} not a number field in {fc}, cannot convert to integer"
+        )
         return
     if field.type == "Integer":
-        logger.info(f"{id_field} is already an integer data type, no need to convert the data type")
+        logger.info(
+            f"{id_field} is already an integer data type, no need to convert the data type"
+        )
         arcpy.management.AddIndex(
-        in_table=fc,
-        fields=id_field,
-        index_name="id_idx2",
-        unique="UNIQUE",
-        ascending="NON_ASCENDING",
-    )
+            in_table=fc,
+            fields=id_field,
+            index_name="id_idx2",
+            unique="UNIQUE",
+            ascending="NON_ASCENDING",
+        )
         return
 
     temp_fieldname = "_uniqueIdentifier"
@@ -758,7 +790,7 @@ def convertIdFieldToInteger(fc):
         field_name=temp_fieldname,
         field_type="LONG",
         field_is_nullable="NULLABLE",
-        field_is_required="NON_REQUIRED"
+        field_is_required="NON_REQUIRED",
     )
     arcpy.management.CalculateField(
         in_table=fc,
@@ -777,7 +809,7 @@ def convertIdFieldToInteger(fc):
         field_name=id_field,
         field_type="LONG",
         field_is_nullable="NULLABLE",
-        field_is_required="NON_REQUIRED"
+        field_is_required="NON_REQUIRED",
     )
     arcpy.management.AddIndex(
         in_table=fc,
@@ -885,14 +917,14 @@ def applyChangeset(changeset, target_fc):
         )
 
     final_total = int(arcpy.management.GetCount(target_fc).getOutput(0))
-    logger.info(
-        f"Number of rows in target after changes applied: {final_total}"
-    )
+    logger.info(f"Number of rows in target after changes applied: {final_total}")
 
     expected_total = count_target - count_deletes + count_inserts
     if expected_total != final_total:
         diff = expected_total - final_total
-        logger.warning(f"Expected total of {expected_total} does not match actual final total {final_total}. Out by {diff}")
+        logger.warning(
+            f"Expected total of {expected_total} does not match actual final total {final_total}. Out by {diff}"
+        )
 
 
 @timing_decorator
@@ -1070,6 +1102,7 @@ def main(args):
     if zip_file_to_process is not None:
         source_feature_class = copy_fc_to_staging(zip_path=zip_file_to_process)
         deleteFeaturesNotIntersectingExtent(str(source_feature_class))
+        deleteFeaturesNotMatchingSQL(str(source_feature_class))
     source_feature_class = None
     if changeset:
         json_file = downloadChangeSet()
@@ -1077,6 +1110,7 @@ def main(args):
             logger.info(json_file)
             source_feature_class = convertJsonToFGB(json_file=str(json_file))
             deleteFeaturesNotIntersectingExtent(str(source_feature_class))
+            deleteFeaturesNotMatchingSQL(str(source_feature_class))
 
             # Apply the changes from the changeset to the staging data
             full_feature_class = (
