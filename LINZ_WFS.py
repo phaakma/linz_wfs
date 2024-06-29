@@ -57,7 +57,7 @@ poll_interval = 10  # seconds
 max_polling_time = 600  # seconds
 
 
-def init():
+def init(is_first_setup=False):
     """
     Initialise the script, read settings and configuration
     from file.
@@ -68,14 +68,12 @@ def init():
     global data_directory, layer_data_directory
     global extent_featureclass, logs_directory, proxies, headers
 
-    is_first_setup = False
-
     # load in the settings file or create it.
     script_path = Path(__file__).resolve()
     script_dir = script_path.parent
     settings_file = script_dir / "settings.json"
     settings = {
-        "api_key": "xxxxxxxxxxxxxxxxxxxxx",
+        "api_key": "",
         "data_directory": "",
         "logs_directory": "",
         "proxies": {"http": "", "https": ""},
@@ -87,14 +85,6 @@ def init():
         with settings_file.open("w") as file:
             json.dump(settings, file, indent=4)
 
-    api_key = settings.get("api_key", None)
-    if api_key is None:
-        logger.error(
-            "No api key found! Please update the settings.json file with a valid LINZ api key. Aborting."
-        )
-        exit(1)
-    headers = {"Authorization": f"key {api_key}"}
-
     # set up logging before anything else
     _logs_directory = settings.get("logs", None)
     logs_directory = (
@@ -104,6 +94,13 @@ def init():
     logging_level = settings.get("logging_level", logging.DEBUG)
     logger.setLevel(logging_level)
 
+    api_key = settings.get("api_key", None)
+    if not is_first_setup and (api_key is None or api_key.strip() == ""):
+        logger.error(
+            "No api key found! Please update the settings.json file with a valid LINZ api key. Aborting."
+        )
+        exit(1)
+    headers = {"Authorization": f"key {api_key}"}
     _data_directory = settings.get("data", None)
 
     data_directory = (
@@ -116,7 +113,7 @@ def init():
 
     # create a sample file if it doesn't exist
     config_file = layer_data_directory / "config.json"
-    last_updated_file = layer_data_directory / "_last_updated.json"
+    last_updated_file = layer_data_directory / "last_updated.json"
 
     if not config_file.exists():
         logger.warning(f"This is the initial setup for this configuration.")
@@ -135,6 +132,7 @@ def init():
             "id_field": id_field,
             "target_feature_class": None,
             "retain_after_purge": 5,
+            "initial_buffer": 1000,
         }
         with config_file.open("w") as file:
             json.dump(_config, file, indent=4)
@@ -181,11 +179,11 @@ def ensure_folder(folder):
 
 
 def configureLogging():
-    """ 
+    """
     Set up a logger to a logfile and standard out.
     If the log file is larger than 10MB then it
     rolls over to a new log file.
-    """ 
+    """
 
     ensure_folder(logs_directory)
     # If the log file exists and is larger than 10MB
@@ -225,9 +223,10 @@ def configureLogging():
 
 
 def timing_decorator(func):
-    """ 
+    """
     A helper wrapper function to time other functions.
-    """ 
+    """
+
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
@@ -242,10 +241,10 @@ def timing_decorator(func):
 
 
 def slugify(text, to_lower=False):
-    """ 
+    """
     Convert a string to a safe string that can
     be used as a folder or file name.
-    """ 
+    """
     text = text.strip()
     # Define a translation table to replace invalid characters with an underscore
     invalid_chars = '-<>:"/\\|?*'
@@ -267,11 +266,11 @@ def slugify(text, to_lower=False):
 
 
 def update_nested_dict(d, u):
-    """ 
+    """
     Given two dictionaries, update the first one
     (d) with all entries from the second one (u).
     Does this recursively.
-    """ 
+    """
     for k, v in u.items():
         if isinstance(v, dict) and k in d:
             d[k] = update_nested_dict(d.get(k, {}), v)
@@ -282,7 +281,7 @@ def update_nested_dict(d, u):
 
 def update_last_updated_file(update_time=None):
     """
-    Updates the _last_updated.json file for the
+    Updates the last_updated.json file for the
     current configuration being processed.
     update_time is an ISO date string in UTC.
     """
@@ -303,7 +302,7 @@ def loadConfiguration():
     """
     logger.debug(f"Loading configuration from: {config_file}")
     global params, layer_id, poll_interval, max_polling_time
-    global retain_after_purge, id_field, target_feature_class
+    global retain_after_purge, id_field, target_feature_class, initial_buffer
 
     with open(config_file, "r") as file:
         data = json.load(file)
@@ -327,6 +326,7 @@ def loadConfiguration():
     logger.info(f"target_feature_class: {target_feature_class}")
     cql_filter = data.get("cql_filter", None)
     retain_after_purge = data.get("retain_after_purge", retain_after_purge)
+    initial_buffer = data.get("initial_buffer", initial_buffer)
 
     params = {
         "service": "WFS",
@@ -364,6 +364,7 @@ def getExtentGeometry():
     else:
         extent_geometry = extent_records[0]
     return extent_geometry
+
 
 def geometryToGeojson(in_geometry):
     """
@@ -601,7 +602,9 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
     getExtentGeometry()
     if extent_geometry is None:
         return
-    lyr = arcpy.management.MakeFeatureLayer(in_features=str(feature_class), out_layer="temp_layer")
+    lyr = arcpy.management.MakeFeatureLayer(
+        in_features=str(feature_class), out_layer="temp_layer"
+    )
     arcpy.management.SelectLayerByLocation(
         lyr,
         overlap_type="INTERSECT",
@@ -641,11 +644,11 @@ def downloadChangeSet():
     params["viewparams"] = f"from:{changes_from};to:{changes_to}"
 
     datetime_suffix = now_utc.strftime("%Y%m%dT%H%M%S")
-    output_file = (
-        layer_data_directory
-        / "changesets"
-        / f"layer_{str(layer_id)}_{datetime_suffix}.json"
-    )
+
+    download_dir = layer_data_directory / "changesets"
+    ensure_folder(download_dir)
+
+    output_file = download_dir / f"layer_{str(layer_id)}_{datetime_suffix}.json"
 
     logger.debug(params)
     # Make the request and stream the response to a file
@@ -695,7 +698,7 @@ def convertJsonToFGB(json_file):
     recreates the id field as integer and copies the data back.
     """
 
-    logger.info("Converting JSON data to feature class.")    
+    logger.info("Converting JSON data to feature class.")
     datetime_suffix = str(Path(json_file).stem).split("_")[-1]
     logger.debug(f"datetime_suffix is: {datetime_suffix}")
     fc = (
@@ -779,23 +782,23 @@ def convertJsonToFGB(json_file):
 
 
 @timing_decorator
-def applyChangeset(changeset, target_feature_class):
-    """ 
-    Both changeset and target_feature_class will be
-    feature classes. 
+def applyChangeset(changeset, target_fc):
+    """
+    Both changeset and target_fc will be
+    feature classes.
     Outputs feature counts to aid troubleshooting.
     Uses the Append GP tool with upserts to apply changes.
-    """ 
+    """
     global editSession
 
     changeset = str(changeset)
-    target_feature_class = str(target_feature_class)
+    target_fc = str(target_fc)
 
     count_changeset = arcpy.management.GetCount(changeset)
-    count_target = arcpy.management.GetCount(target_feature_class)
+    count_target = arcpy.management.GetCount(target_fc)
 
     logger.info(f"Applying {count_changeset} changes from: {changeset}")
-    logger.info(f"Applying changeset to: {target_feature_class}")
+    logger.info(f"Applying changeset to: {target_fc}")
     logger.info(f"Number of rows in target before applying changes: {count_target}")
 
     changeset_layername = "changeset_layer"
@@ -841,7 +844,7 @@ def applyChangeset(changeset, target_feature_class):
         logger.info(f"whereclause: {where_clause}")
         target_layername = "target_layer"
         target_layer = arcpy.management.MakeFeatureLayer(
-            target_feature_class, target_layername, where_clause=where_clause
+            target_fc, target_layername, where_clause=where_clause
         )
 
         arcpy.management.DeleteRows(target_layer)
@@ -851,7 +854,7 @@ def applyChangeset(changeset, target_feature_class):
         logger.debug("Inserting and updating records...")
         arcpy.management.Append(
             inputs=changeset,
-            target=target_feature_class,
+            target=target_fc,
             schema_type="NO_TEST",
             field_mapping=None,
             subtype="",
@@ -861,23 +864,23 @@ def applyChangeset(changeset, target_feature_class):
         )
 
     logger.info(
-        f"Number of rows in target after changes applied: {arcpy.management.GetCount(target_feature_class)}"
+        f"Number of rows in target after changes applied: {arcpy.management.GetCount(target_fc)}"
     )
 
 
 @timing_decorator
-def updateTarget(source_feature_class, target_feature_class, is_changeset):
-    """ 
-    Both source_feature_class and target_feature_class
-    """ 
-    logger.debug(f"Updating specified target: {target_feature_class}")
-    if not arcpy.Exists(target_feature_class):
+def updateTarget(source_feature_class, target_fc, is_changeset):
+    """
+    Both source_feature_class and target_fc
+    """
+    logger.debug(f"Updating specified target: {target_fc}")
+    if not arcpy.Exists(target_fc):
         logger.error(f"Target dataset does not exist. Skipping update.")
         return
 
     if is_changeset:
         logger.debug(f"Applying changeset.")
-        applyChangeset(changeset=source_feature_class, target_feature_class=target_feature_class)
+        applyChangeset(changeset=source_feature_class, target_fc=target_fc)
     else:
         logger.info(f"About to truncate the target and append all new features.")
         ## WARNING!
@@ -885,7 +888,7 @@ def updateTarget(source_feature_class, target_feature_class, is_changeset):
         # Must use Delete Rows GP tool instead. This can be quite slow, especially
         # for large tables. Not a recommended combination.
 
-        target_describe = arcpy.da.Describe(target_feature_class)
+        target_describe = arcpy.da.Describe(target_fc)
         is_versioned = target_describe.get("isVersioned", False)
         has_attachments = any(
             "ATTACHREL" in str(r).upper()
@@ -895,18 +898,18 @@ def updateTarget(source_feature_class, target_feature_class, is_changeset):
             logger.info(
                 f"Target is either versioned ({is_versioned}) or has attachments ({has_attachments}). Using DeleteRows which may be slow to complete."
             )
-            arcpy.management.DeleteRows(target_feature_class)
+            arcpy.management.DeleteRows(target_fc)
         else:
             logger.debug(f"Target is not versioned. Using TruncateTable GP tool.")
-            arcpy.management.TruncateTable(target_feature_class)
+            arcpy.management.TruncateTable(target_fc)
 
         logger.info(f"About to append data.")
         logger.info(source_feature_class)
-        logger.info(target_feature_class)
+        logger.info(target_fc)
 
         arcpy.management.Append(
             inputs=str(source_feature_class),
-            target=str(target_feature_class),
+            target=str(target_fc),
             schema_type="NO_TEST",
             field_mapping=None,
         )
@@ -921,7 +924,7 @@ def purgeChangesets():
     if not retain_after_purge:
         logger.info("No retain_after_purge number specified, skipping purge.")
         return
-        
+
     # Delete changeset json files
     logger.info("Purging old changeset json files")
     changesets_directory = layer_data_directory / "changesets"
@@ -966,11 +969,12 @@ def purgeChangesets():
             logger.warning(f"Error deleting {fc}: {e}")
     return
 
+
 def checkArguments(args):
-    """ 
+    """
     Certain combinations of arguments are expected and some
     combinations would not be valid as they conflict.
-    """ 
+    """
     # Mus do one and only one of init, full, changeset, resume or zip.
     variables = [args.init, args.changeset, args.download, args.resume, args.zip]
     not_none_count = sum(bool(var) for var in variables)
@@ -1012,10 +1016,10 @@ def main(args):
     checkArguments(args)
 
     # initialize
-    is_first_setup = init()
+    is_first_setup = init(is_first_setup=initialise)
     if is_first_setup:
         logger.info(
-            f"Layer data directory created with new config.json file. Please update config file before proceeding."
+            f"Layer data directory created with new config.json file. Please review config file and update if necessary before proceeding."
         )
         exit()
     if initialise:
@@ -1048,12 +1052,12 @@ def main(args):
             deleteFeaturesNotIntersectingExtent(str(source_feature_class))
 
             # Apply the changes from the changeset to the staging data
-            target_feature_class = (
+            full_feature_class = (
                 layer_data_directory / staging_fgb_name / f"layer_{layer_id}"
             )
-            logger.info(target_feature_class)
             applyChangeset(
-                changeset=str(source_feature_class), target_feature_class=str(target_feature_class)
+                changeset=str(source_feature_class),
+                target_fc=str(full_feature_class),
             )
 
     if (
