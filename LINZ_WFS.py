@@ -133,6 +133,8 @@ def init(is_first_setup=False):
             "target_feature_class": None,
             "retain_after_purge": 5,
             "initial_buffer": 1000,
+            "poll_interval": 10,
+            "max_polling_time": 600,
         }
         with config_file.open("w") as file:
             json.dump(_config, file, indent=4)

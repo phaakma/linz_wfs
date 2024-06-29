@@ -87,8 +87,8 @@ Example settings.json file.
 - data - Optional. A path to the data folder. Ensure that there is enough disk space in this location to hold the staging data and implement cleanup processes as necessary. Ensure the user account running the process has read and write access to this folder.  
 - logs - Optional. A path to the logs folder. Logs will be written to this folder. Ensure the user account running the process has read and write access to this folder.   
 - proxies - Optional. Only use this if the server that the process is running on is required to use a forward proxy for all requests and you are required the manually route the traffic to that proxy. Otherwise you can either delete the proxies section completely from the settings file or just set each value to an empty string. 
-- max_polling_time - Optional. How long in seconds the script will keep polling LINZ to see if a requested export is ready for download. Defaults to 600 seconds.  
-- poll_interval - Optional. How long in seconds between polling LINZ to see if a requested export is ready for download. Defaults to 10 seconds.  
+- max_polling_time - Optional. How long in seconds the script will keep polling LINZ to see if a requested export is ready for download. Defaults to 600 seconds. Consider increasing this for large datasets.    
+- poll_interval - Optional. How long in seconds between polling LINZ to see if a requested export is ready for download. Defaults to 10 seconds. If this is a large dataset and you know it will always take a long time, there is no harm in leaving it at 10 seconds but also little point in polling every 10 seconds, so perhaps consider increasing this to 30 or 60 seconds.   
 
 ## Configuration files  
 Configuration files define parameters for a download of a particular LINZ layer. The intial run of run.bat with the --init flag will create a subdirectory in the data directory for this configuration, and create a config.json file which you can alter if necessary.    
