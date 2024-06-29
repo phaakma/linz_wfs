@@ -521,12 +521,13 @@ def download_export(export_id):
         try:
             poll_json_response = poll_response.json()
             state = poll_json_response.get("state")
+            progress = round(float(poll_json_response.get("progress")), 2)
 
             if state == "complete":
                 logger.debug(f"Polling successful. State: {state}")
                 break
             else:
-                logger.debug(f"Polling attempt {attempt}: State: {state}")
+                logger.debug(f"Polling attempt: {attempt}, Progress: {progress}, State: {state}")
         except ValueError as e:
             logger.error(f"Error parsing polling JSON: {e}")
             break
@@ -593,6 +594,7 @@ def copy_fc_to_staging(zip_path):
             in_features=in_features, out_features=str(out_features)
         )
         arcpy.management.Delete(gdb)
+        convertIdFieldToInteger(out_features)
     return out_features
 
 
@@ -623,7 +625,7 @@ def downloadChangeSet():
     """
     Download a changeset from LINZ for this layer.
     """
-
+    global last_updated_datetime
     logger.info("Downloading WFS changeset data to JSON file.")
     if last_updated_file is None or not last_updated_file.exists():
         logger.error(
@@ -674,8 +676,7 @@ def downloadChangeSet():
         if int(data.get("numberReturned", 0)) == 0:
             logger.info(
                 "There were no features in the download. Skipping applying any updates."
-            )
-            update_last_updated_file(last_updated_datetime)
+            )            
             return None
         del data
         logger.debug(f"Timestamp of downloaded data: {last_updated_datetime}")
@@ -715,29 +716,46 @@ def convertJsonToFGB(json_file):
             in_json_file=str(json_file), out_features=str(fc)
         )
 
+    convertIdFieldToInteger(fc)
+
     return fc
 
-    ## TODO - test, and if this not required then remove code below.
 
-    # The GP tool interprets the integer identifier field as a double. This makes
-    # later analysis difficult. Here we add our own integer id field and populate it.
-    # This assumes that LINZ id fields are always integers.
-    uniqueIdentifier_fieldname = "_uniqueIdentifier"
+def convertIdFieldToInteger(fc):
+    """ 
+    LINZ primary key fields are listed on their website as integer,
+    but in the exported file geodatabase are sometimes double.
+    Also, the conversion from geojson to feature class interprets the number
+    as a float too.
+    This function converts a field to an integer data type.
+    Without doing this, the upsert process doesn't correctly match
+    identifiers.
+    """ 
+    logger.info(f"Converting {id_field} to integer type in {fc}")
+    fc = str(fc)
+    fields = [f for f in arcpy.ListFields(fc) if f.name == id_field]
+    if len(fields)==0:
+        logger.warning(f"Could not find {id_field} in {fc}")
+        return
+    field = fields[0]
+    if field.type not in ("Double", "Float", "Integer", "SmallInteger"):
+        logger.warning(f"{id_field} not a number field in {fc}, cannot convert to integer")
+        return
+    if field.type == "Integer":
+        logger.info(f"{id_field} is already an integer data type, no need to convert the data type")
+        return
+
+    temp_fieldname = "_uniqueIdentifier"
     arcpy.management.AddField(
-        in_table=str(fc),
-        field_name=uniqueIdentifier_fieldname,
+        in_table=fc,
+        field_name=temp_fieldname,
         field_type="LONG",
-        field_precision=None,
-        field_scale=None,
-        field_length=None,
-        field_alias="",
         field_is_nullable="NULLABLE",
-        field_is_required="NON_REQUIRED",
-        field_domain="",
+        field_is_required="NON_REQUIRED"
     )
     arcpy.management.CalculateField(
-        in_table=str(fc),
-        field=uniqueIdentifier_fieldname,
+        in_table=fc,
+        field=temp_fieldname,
         expression=f"!{id_field}!",
         expression_type="PYTHON3",
         code_block="",
@@ -745,41 +763,36 @@ def convertJsonToFGB(json_file):
         enforce_domains="NO_ENFORCE_DOMAINS",
     )
     arcpy.management.DeleteField(
-        in_table=str(fc), drop_field=id_field, method="DELETE_FIELDS"
+        in_table=fc, drop_field=id_field, method="DELETE_FIELDS"
     )
     arcpy.management.AddField(
-        in_table=str(fc),
+        in_table=fc,
         field_name=id_field,
         field_type="LONG",
-        field_precision=None,
-        field_scale=None,
-        field_length=None,
-        field_alias="",
         field_is_nullable="NULLABLE",
-        field_is_required="NON_REQUIRED",
-        field_domain="",
+        field_is_required="NON_REQUIRED"
     )
     arcpy.management.AddIndex(
-        in_table=str(fc),
+        in_table=fc,
         fields=id_field,
         index_name="id_idx2",
         unique="UNIQUE",
         ascending="NON_ASCENDING",
     )
     arcpy.management.CalculateField(
-        in_table=str(fc),
+        in_table=fc,
         field=id_field,
-        expression=f"!{uniqueIdentifier_fieldname}!",
+        expression=f"!{temp_fieldname}!",
         expression_type="PYTHON3",
         code_block="",
         field_type="TEXT",
         enforce_domains="NO_ENFORCE_DOMAINS",
     )
     arcpy.management.DeleteField(
-        in_table=str(fc), drop_field=uniqueIdentifier_fieldname, method="DELETE_FIELDS"
+        in_table=fc, drop_field=temp_fieldname, method="DELETE_FIELDS"
     )
 
-    logger.info(f"Finished converting JSON data to feature class.")
+    logger.info(f"Finished converting id field to integer.")
     return fc
 
 
@@ -843,7 +856,6 @@ def applyChangeset(changeset, target_fc):
         logger.debug("Deleting records.")
         delete_ids_string = ",".join(delete_ids)
         where_clause = f"{id_field} in ({delete_ids_string})"
-        logger.info(f"whereclause: {where_clause}")
         target_layername = "target_layer"
         target_layer = arcpy.management.MakeFeatureLayer(
             target_fc, target_layername, where_clause=where_clause
