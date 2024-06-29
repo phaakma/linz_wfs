@@ -1,7 +1,6 @@
 import arcpy
 import requests
 import json
-import sys
 from pathlib import Path
 from datetime import datetime
 import time
@@ -9,9 +8,9 @@ import re
 import logging
 from json.decoder import JSONDecodeError
 import argparse
-from tqdm import tqdm
 import zipfile
 import tempfile
+import os
 
 arcpy.env.overwriteOutput = True
 
@@ -40,6 +39,7 @@ extent_geometry = None
 initial_buffer = 1000
 staging_fgb_name = "staging.gdb"
 target_feature_class = None
+retain_after_purge = 5
 
 poll_interval = 10  # seconds
 max_polling_time = 600  # seconds
@@ -117,7 +117,8 @@ def init():
             "layer_id": layer_id,
             "wkid": _wkid,
             "id_field": id_field,
-            "target_feature_class": None
+            "target_feature_class": None,
+            "retain_after_purge": 5,
         }
         with config_file.open("w") as file:
             json.dump(_config, file, indent=4)
@@ -129,12 +130,11 @@ def init():
     if _proxies.get("http") or _proxies.get("https"):
         proxies = _proxies
 
-    fgb_name = "staging.gdb"
-    fgb = layer_data_directory / fgb_name
+    fgb = layer_data_directory / staging_fgb_name
     # create a file geodatabase if it doesn't exist.
     if not arcpy.Exists(str(fgb)):
         logger.debug("Staging file geodatabase didn't exist, creating it now.")
-        arcpy.management.CreateFileGDB(str(layer_data_directory), fgb_name)
+        arcpy.management.CreateFileGDB(str(layer_data_directory), staging_fgb_name)
     else:
         # Compact the file geodatabase to give best performance for upcoming edits.
         arcpy.management.Compact(str(fgb))
@@ -152,6 +152,7 @@ def init():
 
     logger.debug(f"..............Script initialised..................")
     return is_first_setup
+
 
 def ensure_folder(folder):
     """Create a folder if it doesn't exist"""
@@ -350,12 +351,13 @@ def update_last_updated_file(update_time=None):
     return
 
 
-def loadLayerParameters():
+def loadConfiguration():
     """
-    Load config parameters and create parameter dictionary.
+    Load configuration from file.
     """
     logger.debug(f"Loading configuration from: {config_file}")
-    global params, layer_id, poll_interval, max_polling_time, id_field, target_feature_class
+    global params, layer_id, poll_interval, max_polling_time
+    global retain_after_purge, id_field, target_feature_class
 
     with open(config_file, "r") as file:
         data = json.load(file)
@@ -369,26 +371,34 @@ def loadLayerParameters():
         exit()
     id_field = data.get("id_field", None)
     if id_field is None:
-        logger.error(f"Missing id_field in config.json file. Please fix and re-run. Aborting.")
+        logger.error(
+            f"Missing id_field in config.json file. Please fix and re-run. Aborting."
+        )
         exit()
     poll_interval = data.get("poll_interval", poll_interval)
     max_polling_time = data.get("max_polling_time", max_polling_time)
     target_feature_class = data.get("target_feature_class", None)
     logger.info(f"target_feature_class: {target_feature_class}")
+    cql_filter = data.get("cql_filter", None)
+    retain_after_purge = data.get("retain_after_purge", retain_after_purge)
 
     params = {
-        "wfs_request_params": {
-            "service": "WFS",
-            "version": "2.0.0",
-            "typename": f"layer-{layer_id}-changeset",
-            "request": "GetFeature",
-            "srsname": f"EPSG:{wkid}",
-            "outputFormat": "json",
-        }
+        "service": "WFS",
+        "version": "2.0.0",
+        "typename": f"layer-{layer_id}-changeset",
+        "request": "GetFeature",
+        "srsname": f"EPSG:{wkid}",
+        "outputFormat": "json",
+        "cql_filter": cql_filter,
     }
 
-    logger.debug(f"Full configuration: {params}")
-    return params
+    if cql_filter is None:
+        getExtentGeometry()
+        if extent_geometry is not None:
+            ## cql_filter and bbox cannot be used together.
+            bbox_string = geometryToBboxString(extent_geometry)
+            params["bbox"] = bbox_string
+    return
 
 
 def getExtentGeometry():
@@ -459,15 +469,17 @@ def geometryToGeojson(in_geometry):
         raise ValueError(in_geometry)
 
 
-def geometryToBbox(in_geometry):
+def geometryToBboxString(in_geometry):
     """
-    Convert a geometry to a BBOX string
+    Convert a geometry to a BBOX string.
+    XMin,YMin,XMax,YMax,EPSG:wkid
     """
     in_geometry = in_geometry.projectAs(arcpy.SpatialReference(4326))
-    return
+    extent = in_geometry.extent
+    bbox_string = f"{extent.XMin},{extent.YMin},{extent.XMax},{extent.YMax},EPSG:{extent.spatialReference.factoryCode}"
+    return bbox_string
 
 
-@timing_decorator
 def initiate_export(_layer_id):
     """
     Request a data export from LINZ, return the export id and status_url.
@@ -477,7 +489,7 @@ def initiate_export(_layer_id):
     validation_url = f"{requests_url}validate/"
 
     data = {
-        "crs": params["wfs_request_params"]["srsname"],
+        "crs": params["srsname"],
         "items": [
             {"item": f"https://data.linz.govt.nz/services/api/v1.x/layers/{_layer_id}/"}
         ],
@@ -628,7 +640,7 @@ def copy_fc_to_staging(zip_path):
 
         # get list of file geodatabases in the temp folder. get the first one.
         arcpy.env.workspace = temp_dir
-        gdb = arcpy.ListWorkspaces("*", "FIleGDB")[0]
+        gdb = arcpy.ListWorkspaces("*", "FileGDB")[0]
         logger.debug(gdb)
         arcpy.env.workspace = gdb
         in_features = arcpy.ListFeatureClasses()[0]
@@ -668,6 +680,7 @@ def downloadChangeSet():
     Download a changeset from LINZ for this layer.
     """
 
+    logger.debug("Downloading WFS changeset data to JSON file.")
     if last_updated_file is None or not last_updated_file.exists():
         logger.error(
             f"Processing a changeset requires knowing a date to retrieve changes from. Please run a full download or manually resolve this before attempting a changeset."
@@ -686,18 +699,17 @@ def downloadChangeSet():
     changes_to = f"{now_utc.isoformat()}Z"
     logger.debug(f"Changes date range (UTC): from:{changes_from};to:{changes_to}")
 
-    params["wfs_request_params"]["viewparams"] = f"from:{changes_from};to:{changes_to}"
+    params["viewparams"] = f"from:{changes_from};to:{changes_to}"
 
-    datetime_suffix = now_utc.strftime("%Y%m%d_%H%M%S")
-    output_file = layer_data_directory / f"layer_{str(layer_id)}_{datetime_suffix}.json"
+    datetime_suffix = now_utc.strftime("%Y%m%dT%H%M%S")
+    output_file = layer_data_directory / "changesets" / f"layer_{str(layer_id)}_{datetime_suffix}.json"
 
-    logger.debug("Downloading WFS data to JSON file.")
-    logger.debug(params["wfs_request_params"])
+    logger.debug(params)
     # Make the request and stream the response to a file
     response = requests.get(
         wfs_url,
         headers=headers,
-        params=params["wfs_request_params"],
+        params=params,
         stream=True,
         proxies=proxies,
     )
@@ -710,13 +722,13 @@ def downloadChangeSet():
         # Get the timeStamp to return
         with open(output_file, "r") as file:
             data = json.load(file)
-        last_updated_datetime = data.get('timeStamp', None)
+        last_updated_datetime = data.get("timeStamp", None)
         if int(data.get("numberReturned", 0)) == 0:
             logger.info(
-                "There were no features in the download. Skipping applying any updates. Exiting now."
+                "There were no features in the download. Skipping applying any updates."
             )
             update_last_updated_file(last_updated_datetime)
-            exit()
+            return None
         del data
         logger.debug(f"Timestamp of downloaded data: {last_updated_datetime}")
     except JSONDecodeError as jErr:
@@ -729,44 +741,10 @@ def downloadChangeSet():
 
 
 @timing_decorator
-def downloadWFSData(url, params, output_file):
-
-    ##TODO: remove this function, deprecated.
-
-    logger.debug("Downloading WFS data to JSON file.")
-    logger.debug(wfs_url)
-    logger.debug(params)
-    # Make the request and stream the response to a file
-    response = requests.get(url, params=params, stream=True, proxies=proxies)
-    with open(output_file, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    logger.info(f"WFS data download complete and saved to: {output_file}.")
-
-    try:
-        # Get the timeStamp to return
-        with open(output_file, "r") as file:
-            data = json.load(file)
-        last_updated_datetime = data.get('timeStamp', None)
-        del data
-        logger.debug(f"Timestamp of downloaded data: {last_updated_datetime}")
-    except JSONDecodeError as jErr:
-        logger.error(
-            f"Error encountered parsing the downloaded data. Check the download file for error messages."
-        )
-        logger.error(jErr)
-        exit(1)
-    return data
-
-
-@timing_decorator
 def convertJsonToFGB(json_file):
     """
     The json_file should be geojson FeatureCollection.
-    This function creates a staging file geodatabase in the
-    layer data directory if necessary.
-    Then deletes any existing feature class with this layer name.
-    Then converts the json to feature class using the standard JSONToFeatures
+    Converts the json to feature class using the standard JSONToFeatures
     GP tool.
     Unfortunately, LINZ id fields are integers which the GP tool interprets
     as doubles. This makes data manipulation later harder. To cater for this,
@@ -777,7 +755,14 @@ def convertJsonToFGB(json_file):
     logger.debug("Converting JSON data to feature class.")
     uniqueIdentifier_fieldname = "_uniqueIdentifier"
 
-    fc = layer_data_directory / "staging.gdb" / f"layer_{layer_id}_changeset"
+    datetime_suffix = str(Path(json_file).stem).split("_")[-1]
+    logger.debug(f"datetime_suffix is: {datetime_suffix}")
+
+    fc = (
+        layer_data_directory
+        / staging_fgb_name
+        / f"layer_{layer_id}_changeset_{datetime_suffix}"
+    )
 
     # convert json file into feature class.
     # The environment variables force no Z or M values
@@ -944,10 +929,7 @@ def updateTarget(source_feature_class, target_dataset, is_changeset):
 
     if is_changeset:
         logger.debug(f"Applying changeset.")
-        applyChangeset(
-            changeset=source_feature_class,
-            target_dataset=target_dataset
-        )
+        applyChangeset(changeset=source_feature_class, target_dataset=target_dataset)
     else:
         logger.info(f"About to truncate the target and append all new features.")
         ## WARNING!
@@ -983,6 +965,45 @@ def updateTarget(source_feature_class, target_dataset, is_changeset):
         logger.info(f"Finished updating target dataset.")
 
 
+def purgeChangesets():
+    """
+    Delete old changesets, retain the last number
+    as specified by retain_after_purge configuration setting.
+    """
+    # Delete changeset json files
+    logger.info("Purging old changeset json files")
+    changesets_directory = layer_data_directory / "changesets"
+    json_files = list(changesets_directory.glob("*.json"))
+    json_files.sort(key=lambda x: os.path.getctime(x), reverse=True)
+    files_to_delete = json_files[retain_after_purge:]
+    for file in files_to_delete:
+        try:
+            file.unlink()  # Delete the file
+            logger.debug(f"Deleted: {file}")
+        except Exception as e:
+            logger.warning(f"Error deleting {file}: {e}")
+
+    # Delete changeset feature classes
+    staging_fgb = layer_data_directory / staging_fgb_name
+    arcpy.env.workspace = str(staging_fgb)
+    feature_classes = arcpy.ListFeatureClasses()
+
+    # Filter feature classes that contain "changeset" in their names
+    logger.info("Purging old changeset feature classes")
+    changeset_feature_classes = [
+        fc for fc in feature_classes if "changeset" in fc
+    ]
+    changeset_feature_classes.sort()
+    feature_classes_to_delete = changeset_feature_classes[:-retain_after_purge]
+    for fc in feature_classes_to_delete:
+        try:
+            arcpy.Delete_management(fc)
+            logger.debug(f"Deleted: {fc}")
+        except Exception as e:
+            logger.warning(f"Error deleting {fc}: {e}")
+    return
+
+
 @timing_decorator
 def main(args):
     """
@@ -1002,6 +1023,7 @@ def main(args):
     full_download = args.download
     export_id = args.resume
     zip_file_to_process = args.zip
+    purge_changesets = args.purge
 
     # canonly do one of full, changeset, resume or zip at once.
     variables = [initialise, changeset, full_download, export_id, zip_file_to_process]
@@ -1030,7 +1052,7 @@ def main(args):
         logger.info(f"Layer data directory initialised. {layer_data_directory}")
         exit()
 
-    params = loadLayerParameters()
+    loadConfiguration()
     logger.info("params loaded.")
 
     if layer_id is None:
@@ -1045,31 +1067,41 @@ def main(args):
         zip_file_to_process = download_export(export_id=export_id)
         logger.info(f"Export downloaded to zip file: {zip_file_to_process}")
     if zip_file_to_process is not None:
-        source_feature_class = copy_fc_to_staging(zip_path=zip_file_to_process)        
-        deleteFeaturesNotIntersectingExtent(str(source_feature_class))    
+        source_feature_class = copy_fc_to_staging(zip_path=zip_file_to_process)
+        deleteFeaturesNotIntersectingExtent(str(source_feature_class))
+    source_feature_class = None
     if changeset:
         json_file = downloadChangeSet()
-        logger.info(json_file)
-        source_feature_class = convertJsonToFGB(json_file=str(json_file))
-        deleteFeaturesNotIntersectingExtent(str(source_feature_class))
+        if json_file is not None:
+            logger.info(json_file)
+            source_feature_class = convertJsonToFGB(json_file=str(json_file))
+            deleteFeaturesNotIntersectingExtent(str(source_feature_class))
 
-        # Apply the changes from the changeset to the staging data
-        target_dataset=layer_data_directory / staging_fgb_name / f"layer_{layer_id}"
-        logger.info(target_dataset)
-        applyChangeset(
-            changeset=str(source_feature_class),
-            target_dataset=str(target_dataset)
-        )
-    
-    if (full_download or changeset) and target_feature_class is not None:
+            # Apply the changes from the changeset to the staging data
+            target_dataset = (
+                layer_data_directory / staging_fgb_name / f"layer_{layer_id}"
+            )
+            logger.info(target_dataset)
+            applyChangeset(
+                changeset=str(source_feature_class), target_dataset=str(target_dataset)
+            )
+
+    if (
+        (full_download or changeset)
+        and source_feature_class is not None
+        and target_feature_class is not None
+    ):
         # Apply new data to target_feature_class
         updateTarget(
             source_feature_class=source_feature_class,
             target_dataset=target_feature_class,
-            is_changeset=changeset
+            is_changeset=changeset,
         )
 
     update_last_updated_file(last_updated_datetime)
+
+    if purge_changesets:
+        purgeChangesets()
 
     logger.info(f"Finished")
     return
@@ -1093,9 +1125,7 @@ if __name__ == "__main__":
         help="Flag to initialise a data folder, create config file and staging.gdb but don't download anything.",
     )
     parser.add_argument(
-        "-l",
-        "--layer",
-        help="Required on initial setup, this is the LINZ layer id.",
+        "-l", "--layer", help="Required on initial setup, this is the LINZ layer id."
     )
     parser.add_argument(
         "-f",
@@ -1107,6 +1137,12 @@ if __name__ == "__main__":
         "--changeset",
         action="store_true",
         help="Flag indicating to download the layer changeset.",
+    )
+    parser.add_argument(
+        "-p",
+        "--purge",
+        action="store_true",
+        help="Flag indicating whether to purge old changesets.",
     )
     parser.add_argument(
         "-d",
@@ -1122,9 +1158,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "-r",
-        "--resume",
-        help="Resume polling for a previous full export attempt.",
+        "-r", "--resume", help="Resume polling for a previous full export attempt."
     )
 
     parser.add_argument(
