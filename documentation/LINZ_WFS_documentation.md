@@ -208,6 +208,12 @@ The zip file that this script downloads is exactly the same one that you get if 
 > run.bat --name nzproperty --resume 3534442 
 > run.bat --name nzproperty --zip "L:\\LINZ\\data\\nzproperties\\full\\my_download.zip"  
 
+## Logging  
+The python script uses a logger to write all logs down to the debug level to a file called logfile.log in the logs directory. If this file reaches 10MB in size then that file will be renamed and a new logfile.log file will be started.  
+However, since this is intended to be run unattended, there are some errors that may cause the python script or terminal window to crash which may not be captured by the logger. To aid with troubleshooting, the batch file pipes all logger.info output and std_error output to another file called "LINZ_WFS.py_last_run.log" in the logs directory. This file is overwritten each time the script is run.  
+
+One of your first troubleshooting steps should be to check the two different logging files for error messages.  
+
 ## FAQ, Use Cases and Considerations  
 
 ### Troubleshooting  
