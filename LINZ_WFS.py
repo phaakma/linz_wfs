@@ -743,6 +743,13 @@ def convertIdFieldToInteger(fc):
         return
     if field.type == "Integer":
         logger.info(f"{id_field} is already an integer data type, no need to convert the data type")
+        arcpy.management.AddIndex(
+        in_table=fc,
+        fields=id_field,
+        index_name="id_idx2",
+        unique="UNIQUE",
+        ascending="NON_ASCENDING",
+    )
         return
 
     temp_fieldname = "_uniqueIdentifier"
@@ -809,8 +816,8 @@ def applyChangeset(changeset, target_fc):
     changeset = str(changeset)
     target_fc = str(target_fc)
 
-    count_changeset = arcpy.management.GetCount(changeset)
-    count_target = arcpy.management.GetCount(target_fc)
+    count_changeset = int(arcpy.management.GetCount(changeset).getOutput(0))
+    count_target = int(arcpy.management.GetCount(target_fc).getOutput(0))
 
     logger.info(f"Applying {count_changeset} changes from: {changeset}")
     logger.info(f"Applying changeset to: {target_fc}")
@@ -827,21 +834,21 @@ def applyChangeset(changeset, target_fc):
         selection_type="NEW_SELECTION",
         where_clause="__change__ = 'INSERT'",
     )
-    count_inserts = result.getOutput(1)
+    count_inserts = int(result.getOutput(1))
     logger.info(f"Number of INSERT from the changeset: {count_inserts}")
     result = arcpy.management.SelectLayerByAttribute(
         changeset_layername,
         selection_type="NEW_SELECTION",
         where_clause="__change__ = 'UPDATE'",
     )
-    count_updates = result.getOutput(1)
+    count_updates = int(result.getOutput(1))
     logger.info(f"Number of UPDATE from the changeset: {count_updates}")
     result = arcpy.management.SelectLayerByAttribute(
         changeset_layername,
         selection_type="NEW_SELECTION",
         where_clause="__change__ = 'DELETE'",
     )
-    count_deletes = result.getOutput(1)
+    count_deletes = int(result.getOutput(1))
     logger.info(f"Number of DELETE from the changeset: {count_deletes}")
     arcpy.Delete_management(changeset_layer)
 
@@ -864,7 +871,7 @@ def applyChangeset(changeset, target_fc):
         arcpy.management.DeleteRows(target_layer)
         arcpy.Delete_management(target_layer)
 
-    if int(count_updates) > 0 or int(count_inserts) > 0:
+    if count_updates > 0 or count_inserts > 0:
         logger.debug("Inserting and updating records...")
         arcpy.management.Append(
             inputs=changeset,
@@ -877,9 +884,15 @@ def applyChangeset(changeset, target_fc):
             update_geometry="UPDATE_GEOMETRY",
         )
 
+    final_total = int(arcpy.management.GetCount(target_fc).getOutput(0))
     logger.info(
-        f"Number of rows in target after changes applied: {arcpy.management.GetCount(target_fc)}"
+        f"Number of rows in target after changes applied: {final_total}"
     )
+
+    expected_total = count_target - count_deletes + count_inserts
+    if expected_total != final_total:
+        diff = expected_total - final_total
+        logger.warning(f"Expected total of {expected_total} does not match actual final total {final_total}. Out by {diff}")
 
 
 @timing_decorator
