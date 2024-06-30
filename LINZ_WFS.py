@@ -95,6 +95,8 @@ def init(is_first_setup=False):
     logging_level = settings.get("logging_level", logging.DEBUG)
     logger.setLevel(logging_level)
 
+    logger.info(f"Initializing. Loading settings.")
+
     api_key = settings.get("api_key", None)
     if not is_first_setup and (api_key is None or api_key.strip() == ""):
         logger.error(
@@ -304,7 +306,7 @@ def loadConfiguration():
     """
     Load configuration from file.
     """
-    logger.debug(f"Loading configuration from: {config_file}")
+    logger.info(f"Loading configuration from: {config_file}")
     global params, layer_id, poll_interval, max_polling_time, sql_filter
     global retain_after_purge, id_field, target_feature_class, initial_buffer
 
@@ -327,8 +329,6 @@ def loadConfiguration():
     poll_interval = data.get("poll_interval", poll_interval)
     max_polling_time = data.get("max_polling_time", max_polling_time)
     target_feature_class = data.get("target_feature_class", None)
-    logger.info(f"target_feature_class: {target_feature_class}")
-
     retain_after_purge = data.get("retain_after_purge", retain_after_purge)
     initial_buffer = data.get("initial_buffer", initial_buffer)
     bbox_string = None
@@ -435,7 +435,7 @@ def initiate_export(_layer_id):
     Request a data export from LINZ, intiate the export and
     return the export id.
     """
-    logger.info("downloading a full dataset as file geodatabase.")
+    logger.info("Downloading a full dataset as file geodatabase.")
     requests_url = "https://data.linz.govt.nz/services/api/v1.x/exports/"
     validation_url = f"{requests_url}validate/"
 
@@ -494,7 +494,6 @@ def initiate_export(_layer_id):
     export_id = json_response.get("id")
     status_url = json_response.get("url")
     logger.info(f"Export id is: {export_id}")
-    logger.info(f"Status URL is {status_url}")
     return export_id
 
 
@@ -503,8 +502,8 @@ def download_export(export_id):
     Polls LINZ for a given export id and downloads
     it when finished.
     """
-    logger.debug(
-        f"Polling every {poll_interval} seconds for a maximum of {max_polling_time} seconds"
+    logger.info(
+        f"Downloading {export_id}. Polling every {poll_interval} seconds for a maximum of {max_polling_time} seconds"
     )
 
     start_time = time.time()
@@ -560,12 +559,12 @@ def download_export(export_id):
             # Iterate over the response content in chunks
             for chunk in response.iter_content(chunk_size=8192):
                 file.write(chunk)
-        logger.debug(f"FGB successfully downloaded to: {download_file}")
     else:
         logger.error(f"Failed to download file. Status code: {response.status_code}")
         logger.error(f"Response Content: {response.text}")
         exit()
 
+    logger.info(f"Export downloaded to zip file: {download_file}")
     return download_file
 
 
@@ -614,7 +613,7 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
     if extent_geometry is None:
         return
 
-    logger.debug(f"Deleting all feature that don't intersect the extent")
+    logger.info(f"Deleting all feature that don't intersect the extent")
     lyr = arcpy.management.MakeFeatureLayer(
         in_features=str(feature_class), out_layer="temp_layer"
     )
@@ -636,7 +635,7 @@ def deleteFeaturesNotMatchingSQL(feature_class):
     """
     if sql_filter is None:
         return
-    logger.debug(f"Deleting all features that don't match the given SQL expression")
+    logger.info(f"Deleting all features that don't match the given SQL expression")
     lyr = arcpy.management.MakeFeatureLayer(
         in_features=str(feature_class), out_layer="temp_layer"
     )
@@ -932,7 +931,7 @@ def updateTarget(source_feature_class, target_fc, is_changeset):
     """
     Both source_feature_class and target_fc
     """
-    logger.debug(f"Updating specified target: {target_fc}")
+    logger.info(f"Updating specified target: {target_fc}")
     if not arcpy.Exists(target_fc):
         logger.error(f"Target dataset does not exist. Skipping update.")
         return
@@ -1085,9 +1084,9 @@ def main(args):
         logger.info(f"Layer data directory initialised. {layer_data_directory}")
         exit()
 
+    logger.info(f"Name is: {config_name}")
     loadConfiguration()
-    logger.info("params loaded.")
-
+    
     if layer_id is None:
         # by this point we should always have a layer id.
         logger.error(f"Missing layer id. Please run using the --init option first.")
@@ -1095,10 +1094,8 @@ def main(args):
 
     if full_download:
         export_id = initiate_export(layer_id)
-        logger.info(f"Export initiated. Export id is: {export_id}")
     if export_id is not None:
-        zip_file_to_process = download_export(export_id=export_id)
-        logger.info(f"Export downloaded to zip file: {zip_file_to_process}")
+        zip_file_to_process = download_export(export_id=export_id)        
     if zip_file_to_process is not None:
         source_feature_class = copy_fc_to_staging(zip_path=zip_file_to_process)
         deleteFeaturesNotIntersectingExtent(str(source_feature_class))
