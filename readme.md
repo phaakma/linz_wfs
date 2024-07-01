@@ -142,18 +142,19 @@ If you provide a "cql_filter" then you should also provide an equivalent "sql_fi
 
 ## Target Feature Class  
 The configuration file can optionally include a "target_feature_class" value which should be the full path to a feature class in either a file geodatabase or an enterprise geodatabase.  
-If this is not included, then the script will end after it finishes downloading the data and converting it to a feature class in the staging gdb file geodatabase. 
+If this is not included, then the script will end after it finishes downloading the data and copying it to a feature class in the staging gdb file geodatabase. If it is a changeset, the changes are applied to the main staging layer too.  
+
 However, if a target is specified, it will also attempt to apply the update to this target feature class. If it is an enterprise geodatabase, then the path must include the sde file, and the sde file will determine the credentials (and optionally the version) used.  
 The logic used for updating the target is straight forward:
 - If a full download was requested, then the script will truncate the target and append all data back in. 
 
-> **Warning**: If the target is versioned or has attachments enabled, then it will use arcpy.management.DeleteRows instead of arcpy.management.TruncateTable. DeleteRows is much slower than TruncateTable, and therefore this should be avoided if possible. In this case, downloading changesets is the recommended workflow.  
+> **Warning**: If the target is versioned or has attachments enabled, then it will use arcpy.management.DeleteRows instead of arcpy.management.TruncateTable. DeleteRows is much slower than TruncateTable, and therefore this should be avoided if possible. Consider not versioning your target, especially for large datasets.  
 
 - If a changeset was requested, then the script first deletes records in the target that have been tagged for deletion, then performs an upsert using the arcpy.management.Append tool, specifying the match field as the LINZ id field.  
 
 This workflow is suitable for most cases. If you have more complex requirements, you could choose to not specify a target and just let the script populate the feature classes in the staging file geodatabase. Then you could create your own workflow to pull either the newly updated main feature class or the changeset feature class from the staging.gdb into your target. This could be achieved using other python scripts, FME or other ETL tool of your choice.  
 
-> NOTE: The append assumes that the arcpy.management.Append tool can automatically match the fields. You can use a copy of the feature class originally downloaded from LINZ as the template for your own target feature class to ensure they will match.  
+> NOTE: The append assumes that the arcpy.management.Append tool can automatically match the fields. You can use a copy of the feature class in the staging file geodatabase as the template for your own target feature class to ensure they will match.  
 
 ## Changesets  
 LINZ provides a changeset service for each layer. To download a changeset, use the --changeset option.   
@@ -173,31 +174,35 @@ All arguments have a short and a long variant. It is recommended to use the long
 
 ### -n --name  
 This is the only argument that is required every time. It is used to create the subdirectory for a given configuration and therefore in subsequent runs it identifies which folder to read in the configuration from and write any data to. Avoid special characters and spaces.  
-> --name nzproperty
+> run.bat **--name nzproperty** --init --layer 50804 --field id
 
 ### -i --init  
-A flag used to initialise a new configuration. Requires --name, --layer and --field.
+A flag used to initialise a new configuration. Requires --name, --layer and --field.  
+> run.bat --name nzproperty **--init** --layer 50804 --field id
 
 ### -l --layer  
 Used when initialising a new configuration, is a LINZ layer id. Is written into the config.json file so is not required to be used after the initial command.  
-> --layer 50804  
+> run.bat --name nzproperty --init **--layer 50804** --field id  
 
 ### -f --field  
 Used when initialising a new configuration, is the name of the unique primary key field as specified by LINZ. Look this up on the LINZ website. Used by the append tool when performing the upsert for updates.  
-> --field id
+> run.bat --name nzproperty --init --layer 50804 **--field id**
 
 ### -w -wkid  
 Used when initialising a new configuration, the wkid to be used to download the data in. If not specified it defaults to NZTM (2193).
-> --wkid 2193 
+> run.bat --name nzproperty --init --layer 50804 --field id **--wkid 4326** 
 
 ### -d --download
 A flag used to request a full download.   
+> run.bat --name nzproperty **--download**  
 
 ### -c --changeset  
-A flag used to request a changeset.
+A flag used to request a changeset.  
+> run.bat --name nzproperty  **--changeset**  
 
 ### -p --purge  
-A flag used to request that old json files, downloaded zip files and old changeset feature classes be deleted. The "retain_after_purge" option in the config.json file determines how many old files are kept.
+A flag used to request that old json files, downloaded zip files and old changeset feature classes be deleted. The "retain_after_purge" option in the config.json file determines how many old files are kept.  
+> run.bat --name nzproperty --changeset **--purge**  
 
 ### -r --resume  
 Resume polling for a previous full export attempt. If you initiated a full download, but it never downloaded, you can use the LINZ export id to resume and download it. 
@@ -206,27 +211,22 @@ If this happens, check the logs and you will see the export id noted at the time
 > 2024-06-29 13:11:15,794 - INFO - 488 - Export id is: 3534442 
 
 For very large datasets that may take a long time to generate, it is recommended that you use this resume option if possible rather than starting a new export request which would unnecessarily strain the LINZ servers.  
-> --resume 3534442  
+> run.bat --name nzproperty **--resume 3534442**  
 
 ### -z --zip  
 Process an already downloaded zip file from LINZ.  
 The zip file that this script downloads is exactly the same one that you get if you manually create an export using the LINZ website. If you prefer, you can manually download the data and copy it to the data directory, then use the --zip option to process that data.
 > NOTE: If you manually download the data, then the "last_updated.json" file may not have the correct datetime recorded as it doesn't know when you downloaded the data. Manually update this file to the correct datetime before requesting a changeset. 
  
-> --zip "L:\\LINZ\\data\\nzproperties\\full\\my_download.zip"  
-
-### Examples  
-
-> run.bat --name nzproperty --init --layer 50804 --field id  
-> run.bat --name nzproperty --download  
-> run.bat --name nzproperty --changeset
-> run.bat --name nzproperty --changeset --purge
-> run.bat --name nzproperty --resume 3534442 
-> run.bat --name nzproperty --zip "L:\\LINZ\\data\\nzproperties\\full\\my_download.zip"  
+> run.bat --name nzproperty **--zip "L:\\LINZ\\data\\nzproperties\\full\\my_download.zip"**  
 
 ## Logging  
-The python script uses a logger to write all logs down to the debug level to a file called logfile.log in the logs directory. If this file reaches 10MB in size then that file will be renamed and a new logfile.log file will be started.  
-However, since this is intended to be run unattended, there are some errors that may cause the python script or terminal window to crash which may not be captured by the logger. To aid with troubleshooting, the batch file pipes all logger.info output and std_error output to another file called "LINZ_WFS.py_last_run.log" in the logs directory. This file is overwritten each time the script is run.  
+Each named configuration has a folder which has a subdirectory called "logs". The python script uses a logger to write all logs down to the debug level to a file called logfile.log in the logs directory. If this file reaches 10MB in size then that file will be renamed and a new logfile.log file will be started.  
+
+However, since this is intended to be run unattended, there are some errors that may cause the python script or terminal window to crash which may not be captured by the logger. To aid with troubleshooting, the batch file pipes all logger.info output and std_error output to another file called "LINZ_WFS_last_run.log" in the main script directory. 
+This file is appended each time the script is run. This makes two things to be aware of:  
+1. This file contains output from **every** run, so there may be messages relating to different configurations. For this reason, avoid running multiple configurations concurrently, or re-write your own batch file accordingly.  
+2. This file will grow over time. You may wish to periodically delete it if there are no issues to note within the log file.   
 
 One of your first troubleshooting steps should be to check the two different logging files for error messages.  
 
