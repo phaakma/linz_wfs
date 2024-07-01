@@ -69,7 +69,6 @@ Example settings.json file.
 ```
 { 
     "api_key": "xxxxxxxxxxxxxxxxxxxxxx",
-    "config": "C:\\linz\\config",
     "data": "",
     "logs": "",
     "proxies": {
@@ -83,7 +82,7 @@ Example settings.json file.
  
 >NOTE: Windows file paths should use double backslashes.
 
-- api_key - A valid LINZ api key. This key must be manually scoped for "Query layer data", "Full access to tables and layers" and "Full access to data exports".
+- api_key - Required. A valid LINZ api key. This key must be manually scoped for "Query layer data", "Full access to tables and layers" and "Full access to data exports".
 - data - Optional. A path to the data folder. Ensure that there is enough disk space in this location to hold the staging data and implement cleanup processes as necessary. Ensure the user account running the process has read and write access to this folder.  
 - logs - Optional. A path to the logs folder. Logs will be written to this folder. Ensure the user account running the process has read and write access to this folder.   
 - proxies - Optional. Only use this if the server that the process is running on is required to use a forward proxy for all requests and you are required the manually route the traffic to that proxy. Otherwise you can either delete the proxies section completely from the settings file or just set each value to an empty string. 
