@@ -90,7 +90,9 @@ Example settings.json file.
 - poll_interval - Optional. How long in seconds between polling LINZ to see if a requested export is ready for download. Defaults to 10 seconds. If this is a large dataset and you know it will always take a long time, there is no harm in leaving it at 10 seconds but also little point in polling every 10 seconds, so perhaps consider increasing this to 30 or 60 seconds.   
 
 ## Configuration files  
-Configuration files define parameters for a download of a particular LINZ layer. The intial run of run.bat with the --init flag will create a subdirectory in the data directory for this configuration, and create a config.json file which you can alter if necessary.    
+Configuration files define parameters for a particular download of a particular LINZ layer. The intial run of run.bat with the --init flag will create a subdirectory in the data directory for this configuration, and create a config.json file which you can alter if necessary.  
+  
+> NOTE: Yes, you can create multiple configurations for the same LINZ layer if you wish. Just run the --init with different names and the same layer details, and add extent or filtering as you require. E.g. you could download Auckland property titles to one folder and Christchurch property titles to a different folder.  
 
 Example:
 ```
