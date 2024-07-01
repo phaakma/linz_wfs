@@ -21,7 +21,7 @@ Whilst the underlying code could be used to download data from any compatible WF
 3. Obtain a LINZ API key. 
 4. Look up the LINZ layer id and the name of the primary key field for that layer.
 5. Open a command prompt and change the directory to where you have stored the script.
-6. Run the following command: "run.bat --name **config_name** --init --layer **layer_id** --field **field_name**" (replace **config_name** with a descriptive name for this configuration, and **layer_id** and **field_name** with the layer id and primary key field from the previous step).
+6. Run the following command: "run.bat --name **config_name** --init --layer **layer_id** --field **field_name**" (replace **config_name** with a descriptive name for this configuration, and **layer_id** and **field_name** with the layer id and primary key field from Step 4).
 7. Update the API key in the settings.json file that is created in the script directory.
 8. Optionally, tweak the config.json file that is created in the directory for this configuration.
 9. Optionally, add an extent record to the "extent" feature class in the staging.gdb file geodatabase.  
