@@ -58,7 +58,7 @@ poll_interval = 10  # seconds
 max_polling_time = 600  # seconds
 
 
-def init(is_first_setup=False):
+def init(config_name, is_first_setup=False):
     """
     Initialise the script, read settings and configuration
     from file.
@@ -87,10 +87,16 @@ def init(is_first_setup=False):
             json.dump(settings, file, indent=4)
 
     # set up logging before anything else
-    _logs_directory = settings.get("logs", None)
-    logs_directory = (
-        Path(_logs_directory) if _logs_directory is not None else logs_directory
+    # _logs_directory = settings.get("logs", None)
+    _data_directory = settings.get("data_directory", None)
+    data_directory = (
+        Path(_data_directory)
+        if _data_directory is not None and _data_directory.strip() != ""
+        else data_directory
     )
+    layer_data_directory = data_directory / config_name
+    ensure_folder(layer_data_directory)
+    logs_directory = layer_data_directory / "logs"
     logger = configureLogging()
     logging_level = settings.get("logging_level", logging.DEBUG)
     logger.setLevel(logging_level)
@@ -104,15 +110,6 @@ def init(is_first_setup=False):
         )
         exit(1)
     headers = {"Authorization": f"key {api_key}"}
-    _data_directory = settings.get("data", None)
-
-    data_directory = (
-        Path(_data_directory) if _data_directory is not None else data_directory
-    )
-
-    layer_data_directory = data_directory / config_name
-
-    ensure_folder(layer_data_directory)
 
     # create a sample file if it doesn't exist
     config_file = layer_data_directory / "config.json"
@@ -337,8 +334,8 @@ def loadConfiguration():
     if cql_filter is None:
         ## cql_filter and bbox cannot be used together.
         getExtentGeometry()
-        if extent_geometry is not None:        
-            bbox_string = geometryToBboxString(extent_geometry)        
+        if extent_geometry is not None:
+            bbox_string = geometryToBboxString(extent_geometry)
 
     params = {
         "service": "WFS",
@@ -608,7 +605,7 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
     """
     Delete all features in the given feature class that
     don't intersect the extent.
-    """    
+    """
     getExtentGeometry()
     if extent_geometry is None:
         return
@@ -621,7 +618,7 @@ def deleteFeaturesNotIntersectingExtent(feature_class):
         lyr,
         overlap_type="INTERSECT",
         select_features=extent_featureclass,
-        invert_spatial_relationship="INVERT"
+        invert_spatial_relationship="INVERT",
     )
     arcpy.management.DeleteRows(lyr)
     arcpy.Delete_management(lyr)
@@ -1074,7 +1071,7 @@ def main(args):
     checkArguments(args)
 
     # initialize
-    is_first_setup = init(is_first_setup=initialise)
+    is_first_setup = init(config_name=config_name, is_first_setup=initialise)
     if is_first_setup:
         logger.info(
             f"Layer data directory created with new config.json file. Please review config file and update if necessary before proceeding."
@@ -1086,7 +1083,7 @@ def main(args):
 
     logger.info(f"Name is: {config_name}")
     loadConfiguration()
-    
+
     if layer_id is None:
         # by this point we should always have a layer id.
         logger.error(f"Missing layer id. Please run using the --init option first.")
@@ -1095,7 +1092,7 @@ def main(args):
     if full_download:
         export_id = initiate_export(layer_id)
     if export_id is not None:
-        zip_file_to_process = download_export(export_id=export_id)        
+        zip_file_to_process = download_export(export_id=export_id)
     if zip_file_to_process is not None:
         source_feature_class = copy_fc_to_staging(zip_path=zip_file_to_process)
         deleteFeaturesNotIntersectingExtent(str(source_feature_class))
