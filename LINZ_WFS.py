@@ -209,7 +209,7 @@ def configureLogging():
     logger.setLevel(logging.DEBUG)
 
     consoleHandler = logging.StreamHandler()
-    file_logging_handler = logging.FileHandler(logFileWithExtension)
+    file_logging_handler = logging.FileHandler(logFileWithExtension, encoding='utf-8')
 
     consoleHandler.setLevel(logging.INFO)
     file_logging_handler.setLevel(logging.DEBUG)
@@ -694,7 +694,7 @@ def downloadChangeSet():
 
     try:
         # Get the timeStamp to return
-        with open(output_file, "r") as file:
+        with open(output_file, "r", encoding="utf-8") as file:
             data = json.load(file)
         last_updated_datetime = data.get("timeStamp", None)
         if int(data.get("numberReturned", 0)) == 0:
@@ -899,18 +899,25 @@ def applyChangeset(changeset, target_fc):
         arcpy.management.DeleteRows(target_layer)
         arcpy.Delete_management(target_layer)
 
-    if count_updates > 0 or count_inserts > 0:
-        logger.debug("Inserting and updating records...")
+## NOTE: using the Append GP tool and match fields to do an upsert
+## didn't seem to reliably work. So changed to using an append plus
+## a custom applyUpdates function
+    if count_inserts > 0:
+        logger.debug("Inserting new records...")
         arcpy.management.Append(
             inputs=changeset,
             target=target_fc,
             schema_type="NO_TEST",
             field_mapping=None,
             subtype="",
-            expression="__change__ IN ('INSERT', 'UPDATE')",
+            #expression="__change__ IN ('INSERT', 'UPDATE')",
+            expression="__change__ = 'INSERT'",
             match_fields=f"{id_field} {id_field}",
             update_geometry="UPDATE_GEOMETRY",
         )
+
+    if count_updates > 0:
+        processUpdates(changeset, target_fc, id_field)
 
     final_total = int(arcpy.management.GetCount(target_fc).getOutput(0))
     logger.info(f"Number of rows in target after changes applied: {final_total}")
@@ -922,6 +929,60 @@ def applyChangeset(changeset, target_fc):
             f"Expected total of {expected_total} does not match actual final total {final_total}. Out by {diff}"
         )
 
+def processUpdates(source, target, id_field):
+    """ 
+    Applies updates from the source to the target.
+    The source is a changeset with a __change__ field.
+    The target is expected to have the same schema.
+    """ 
+    logger.info(f"In the processUpdates function!")
+
+    source_desc = arcpy.da.Describe(source)
+    target_desc = arcpy.da.Describe(target)
+
+    source_fields = [field.name.lower() for field in source_desc.get("fields")]
+    target_fields = [field.name.lower() for field in target_desc.get("fields")]
+
+    logger.debug(f"Source fields: {source_fields}")
+    logger.debug(f"Target fields: {target_fields}")
+
+    if source_desc.get("globalIDFieldName") in source_fields: source_fields.remove(source_desc.get("globalIDFieldName"))
+    if source_desc.get("OIDFieldName") in source_fields: source_fields.remove(source_desc.get("OIDFieldName"))
+    if target_desc.get("globalIDFieldName") in target_fields: target_fields.remove(target_desc.get("globalIDFieldName"))
+    if target_desc.get("OIDFieldName") in target_fields: target_fields.remove(target_desc.get("OIDFieldName"))
+
+    ## work out which fields are date type fields
+    date_fields = [f.name for f in target_desc.get("fields") if f.type == 'Date']
+    text_fields = [f.name for f in target_desc.get("fields") if f.type == 'String']
+
+    with arcpy.da.SearchCursor(in_table = source, field_names=source_fields, where_clause = "__change__ = 'UPDATE'") as cursor:
+        for row in cursor:
+            #row is a record that requires updating in the target.             
+            #logger.info(row)  
+
+            record_id = row[source_fields.index(id_field)]
+            #construct a list of field data in the order that matches the target fields
+            updateData = []
+            for field in target_fields:
+                updateData.append(row[source_fields.index(field)])
+
+            #update cursor on the target, where_clause targeting the id_field
+            wc = f"{id_field} = {record_id}"
+            with arcpy.da.UpdateCursor(in_table=target, field_names=target_fields, where_clause=wc) as updateCursor:
+                for r in updateCursor:
+                    for field in target_fields:
+                        val = row[source_fields.index(field)]
+                        if field in date_fields:
+                            dt = datetime.strptime(val, '%Y-%m-%dT%H:%M:%SZ')  
+                            r[target_fields.index(field)] = dt
+                        elif field in text_fields and val is not None:                            
+                            r[target_fields.index(field)] = str(val).encode(encoding='utf-8')
+                        else:
+                            r[target_fields.index(field)] = val
+                    updateCursor.updateRow(r)
+            del updateCursor 
+    del cursor 
+    return
 
 @timing_decorator
 def updateTarget(source_feature_class, target_fc, is_changeset):
@@ -1030,8 +1091,8 @@ def checkArguments(args):
     Certain combinations of arguments are expected and some
     combinations would not be valid as they conflict.
     """
-    # Mus do one and only one of init, full, changeset, resume or zip.
-    variables = [args.init, args.changeset, args.download, args.resume, args.zip]
+    # Mus do one and only one of init, full, changeset, resume, json or zip.
+    variables = [args.init, args.changeset, args.download, args.resume, args.json, args.zip]
     not_none_count = sum(bool(var) for var in variables)
     if not_none_count == 0:
         print(
@@ -1067,6 +1128,9 @@ def main(args):
     export_id = args.resume
     zip_file_to_process = args.zip
     purge_changesets = args.purge
+    json_file = args.json
+    if json_file is not None:
+        changeset = True 
 
     checkArguments(args)
 
@@ -1099,7 +1163,8 @@ def main(args):
         deleteFeaturesNotMatchingSQL(str(source_feature_class))
     source_feature_class = None
     if changeset:
-        json_file = downloadChangeSet()
+        if json_file is None:
+            json_file = downloadChangeSet()
         if json_file is not None:
             logger.info(json_file)
             source_feature_class = convertJsonToFGB(json_file=str(json_file))
@@ -1194,6 +1259,12 @@ if __name__ == "__main__":
         "-z",
         "--zip",
         help="Process an already downloaded zip file. Provide the full path to the zip file with this option.",
+    )
+
+    parser.add_argument(
+        "-j",
+        "--json",
+        help="Process an already downloaded changes json file. Provide the full path to the json file with this option.",
     )
 
     args = parser.parse_args()
