@@ -258,3 +258,10 @@ Your choice. Use the tools you have available and are most comfortable with. Tho
 
 ### What if I don't have ArcGIS?  
 This script was written with ArcGIS users in mind and relies on having ArcPy. Having said that, a lot of the code doesn't actually require ArcPy, such as the actual downloading the raw geojson data, so feel free to dive into the code and extract out any parts that may be useful elsewhere.  
+
+
+## Suggested Enhancements  
+
+> Change to using ConfigParser instead of json file. Benefits are that the ConfigParser should already be part of the default python environments, can use comments in the config file, can have one config file with everything in it, can use defaults to set the api key and defaults but these could be overridding in each section if desired.  
+> Add ability to download plain tables. Currently it expects a spatial layer.  
+> Add a history table to the staging file geodatabase that populates whenever run. Currently you can browse the logs to see the history but it would be useful to see a simple summary in a table. Could have things like: datetime of update, number of adds, updates and deletes.
