@@ -910,13 +910,12 @@ def applyChangeset(changeset, target_fc):
             schema_type="NO_TEST",
             field_mapping=None,
             subtype="",
-            #expression="__change__ IN ('INSERT', 'UPDATE')",
             expression="__change__ = 'INSERT'",
-            match_fields=f"{id_field} {id_field}",
             update_geometry="UPDATE_GEOMETRY",
         )
 
     if count_updates > 0:
+        logger.debug("Applying updates to existing records...")
         processUpdates(changeset, target_fc, id_field)
 
     final_total = int(arcpy.management.GetCount(target_fc).getOutput(0))
@@ -929,6 +928,7 @@ def applyChangeset(changeset, target_fc):
             f"Expected total of {expected_total} does not match actual final total {final_total}. Out by {diff}"
         )
 
+@timing_decorator
 def processUpdates(source, target, id_field):
     """ 
     Applies updates from the source to the target.
@@ -946,43 +946,43 @@ def processUpdates(source, target, id_field):
     logger.debug(f"Source fields: {source_fields}")
     logger.debug(f"Target fields: {target_fields}")
 
-    if source_desc.get("globalIDFieldName") in source_fields: source_fields.remove(source_desc.get("globalIDFieldName"))
-    if source_desc.get("OIDFieldName") in source_fields: source_fields.remove(source_desc.get("OIDFieldName"))
-    if target_desc.get("globalIDFieldName") in target_fields: target_fields.remove(target_desc.get("globalIDFieldName"))
-    if target_desc.get("OIDFieldName") in target_fields: target_fields.remove(target_desc.get("OIDFieldName"))
+    # Exclude the GlobalID and OID fields
+    exclude_fields = [source_desc.get("globalIDFieldName"), source_desc.get("OIDFieldName"),
+                      target_desc.get("globalIDFieldName"), target_desc.get("OIDFieldName")]
 
-    ## work out which fields are date type fields
-    date_fields = [f.name for f in target_desc.get("fields") if f.type == 'Date']
-    text_fields = [f.name for f in target_desc.get("fields") if f.type == 'String']
+    source_fields = [f for f in source_fields if f not in exclude_fields]
+    target_fields = [f for f in target_fields if f not in exclude_fields]
 
-    with arcpy.da.SearchCursor(in_table = source, field_names=source_fields, where_clause = "__change__ = 'UPDATE'") as cursor:
+    # Identify date and text fields
+    date_fields = [f.name.lower() for f in target_desc.get("fields") if f.type == 'Date']
+    text_fields = [f.name.lower() for f in target_desc.get("fields") if f.type == 'String']
+
+    # Store rows to be updated in a dictionary keyed by the record id
+    updates_dict = {}
+    with arcpy.da.SearchCursor(in_table=source, field_names=source_fields, where_clause="__change__ = 'UPDATE'") as cursor:
         for row in cursor:
-            #row is a record that requires updating in the target.             
-            #logger.info(row)  
-
             record_id = row[source_fields.index(id_field)]
-            #construct a list of field data in the order that matches the target fields
-            updateData = []
-            for field in target_fields:
-                updateData.append(row[source_fields.index(field)])
-
-            #update cursor on the target, where_clause targeting the id_field
-            wc = f"{id_field} = {record_id}"
-            with arcpy.da.UpdateCursor(in_table=target, field_names=target_fields, where_clause=wc) as updateCursor:
-                for r in updateCursor:
-                    for field in target_fields:
-                        val = row[source_fields.index(field)]
-                        if field in date_fields:
-                            dt = datetime.strptime(val, '%Y-%m-%dT%H:%M:%SZ')  
-                            r[target_fields.index(field)] = dt
-                        elif field in text_fields and val is not None:                            
-                            r[target_fields.index(field)] = str(val).encode(encoding='utf-8')
-                        else:
-                            r[target_fields.index(field)] = val
-                    updateCursor.updateRow(r)
-            del updateCursor 
+            updates_dict[record_id] = row
     del cursor 
+
+    # Use a single UpdateCursor to apply updates in bulk
+    with arcpy.da.UpdateCursor(in_table=target, field_names=target_fields) as updateCursor:
+        for r in updateCursor:
+            record_id = r[target_fields.index(id_field)]
+            if record_id in updates_dict:
+                row = updates_dict[record_id]
+                for field in target_fields:
+                    val = row[source_fields.index(field)]
+                    if field in date_fields:
+                        dt = datetime.strptime(val, '%Y-%m-%dT%H:%M:%SZ')
+                        r[target_fields.index(field)] = dt
+                    else:
+                        r[target_fields.index(field)] = val
+                updateCursor.updateRow(r)
+    del updateCursor
+
     return
+
 
 @timing_decorator
 def updateTarget(source_feature_class, target_fc, is_changeset):
