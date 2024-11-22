@@ -9,6 +9,8 @@
 /logs/
 #Ignore the DrawIO backup files
 *.bkp 
+#Ignore the settings file
+settings.cnf
 
 ### From the standard GitHub Python gitignore file:
 
