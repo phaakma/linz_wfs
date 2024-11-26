@@ -1,5 +1,5 @@
 [DEFAULT]
-api_key =               # REQUIRED: your LINZ API key  
+api_key = xxxxxxxxx     # REQUIRED: your LINZ API key  
 data_directory =        # OPTIONAL: defaults to a subfolder called data.
 http_proxy =            # OPTIONAL: http proxy path 
 https_proxy =           # OPTIONAL: https proxy path 
