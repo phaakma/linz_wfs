@@ -1123,9 +1123,8 @@ def main(args):
         )
         exit()
 
-    # INIT is the same as running without any arguments. The template.cnf is cloned
-    # and must be configured before proceeding.
     if linz_dataset.action == ActionToTake.INIT:
+        linz_dataset.prepare()
         logger.info(f"Init for {linz_dataset.config_name} is complete. Please update the configuration file and optionally the extent feature class.")
         return
 
