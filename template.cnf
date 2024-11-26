@@ -1,7 +1,6 @@
 [DEFAULT]
 api_key =               # REQUIRED: your LINZ API key  
 data_directory =        # OPTIONAL: defaults to a subfolder called data.
-logs_directory =        # OPTIONAL: defaults to a subfolder called logs.
 http_proxy =            # OPTIONAL: http proxy path 
 https_proxy =           # OPTIONAL: https proxy path 
 retain_after_purge = 5  # OPTIONAL: defaults to 5 
