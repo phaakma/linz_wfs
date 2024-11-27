@@ -3,7 +3,7 @@ setlocal
 
 SET "python_path=C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\pythonw.exe"
 SET "python_file=LINZ_WFS.py"
-set logfile="%CD%\LINZ_WFS_last_run.log"
+set logfile="%CD%\LINZ_WFS_batch_logs.log"
 
 ECHO ========================================================
 ECHO SCRIPT PATH = %CD%
