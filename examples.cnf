@@ -1,0 +1,29 @@
+[DEFAULT]
+api_key = xxxxxxxxx     # REQUIRED: your LINZ API key  
+data_directory =        # OPTIONAL: defaults to a subfolder called data.
+http_proxy =            # OPTIONAL: http proxy path 
+https_proxy =           # OPTIONAL: https proxy path 
+retain_after_purge = 5  # OPTIONAL: defaults to 5 
+initial_buffer = 1000   # OPTIONAL: defaults to 1000
+poll_interval = 10      # OPTIONAL: defaults to 10
+max_polling_time = 600  # OPTIONAL: defaults to 600
+wkid = 2193             # OPTIONAL: defaults to 2193 (NZTM)
+logging_level =         # OPTIONAL: defaults to DEBUG (10) https://docs.python.org/3/library/logging.html#levels
+
+[rail_station_points]
+# All railway station points in NZ 
+layer_id = 50318
+id_field = t50_fid
+
+[crossleasetitles]  
+# All Cross Lease Property Titles in NZ            
+layer_id = 50804       
+id_field = id          
+sql_filter = type = 'Cross lease'
+
+[crossleasetitlesmultipleowners]  
+# All Cross Lease Property Titles in NZ with more than one owner 
+layer_id = 50804       
+id_field = id          
+sql_filter = type = 'Cross lease' AND number_owners > 1
+
