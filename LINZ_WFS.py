@@ -845,7 +845,7 @@ class LINZDataset:
             in_features=str(fc), out_layer="temp_layer"
         )
         arcpy.management.SelectLayerByAttribute(
-            in_layer_or_view=lyr, where_clause=sql_filter, invert_where_clause="INVERT"
+            in_layer_or_view=lyr, where_clause=self.sql_filter, invert_where_clause="INVERT"
         )
         arcpy.management.DeleteRows(lyr)
         arcpy.Delete_management(lyr)
@@ -1116,6 +1116,7 @@ def main(args):
     to process the request.
     """
 
+    start_time = time.time()
     linz_dataset = init(args=args)
     if not linz_dataset:
         logger.info(
@@ -1140,7 +1141,9 @@ def main(args):
     if linz_dataset.action == ActionToTake.PROCESSJSONCHANGESET:
         linz_dataset.processChangeSet()
 
-    logger.info(f"Finished")
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    logger.info(f"Finished in {elapsed_time:.4f} seconds.")
     return
 
 
