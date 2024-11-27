@@ -10,19 +10,7 @@ max_polling_time = 600  # OPTIONAL: defaults to 600
 wkid = 2193             # OPTIONAL: defaults to 2193 (NZTM)
 logging_level =         # OPTIONAL: defaults to DEBUG (10) https://docs.python.org/3/library/logging.html#levels
 
-## Example section ###################################################
-## The name of the section determines both the 
-## name of the subfolder for the data and is used as the 
-## --name argument when running the script.
-#[matamata]             # name of the section
-#layer_id = 50804       # this is the LINZ layer id.
-#id_field = id          # this is the LINZ primary id field name 
-## this is an optional target feature class to copy the output to.
-#target_feature_class = c:\temp\data.gdb\layer_50804
-#sql_filter =
-#####################################################################
-
-# The most basic example...
+# The most basic example. Refer examples.cnf for more examples.
 # Delete this rail station points example and replace with your own 
 [rail_station_points]
 layer_id = 50318
