@@ -497,7 +497,7 @@ class LINZDataset:
 
             time.sleep(self.poll_interval)
         else:
-            err = "Polling finished: reached the limit of attempts or time. If necessary, consider increasing these limits in the configuration file. You can resume polling for this export by using --resume {self.export_id}."
+            err = f"Polling finished: reached the limit of attempts or time. If necessary, consider increasing these limits in the configuration file. You can resume polling for this export by using --resume {self.export_id}."
             logger.error(err)
             raise LINZError(err)
 
@@ -1132,7 +1132,7 @@ def main(args):
     if linz_dataset.action == ActionToTake.REQUESTDOWNLOAD:        
         linz_dataset.requestDownload()
     if linz_dataset.action == ActionToTake.DOWNLOADEXPORT:
-        linz_dataset.download_export()    
+        linz_dataset.downloadExport()    
     if linz_dataset.action == ActionToTake.PROCESSFULLDOWNLOAD:
         linz_dataset.processFullDownload()
 
@@ -1198,4 +1198,12 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if not args.name:
+        raise TypeError(f"No --name argument was provided.")
+    logs_directory = script_dir / "logs" / args.name
+    logs_directory.mkdir(parents=True, exist_ok=True) 
+
+    logger = configureLogging(logs_directory)
+    logger.setLevel(logging.DEBUG)
+
     main(args)
