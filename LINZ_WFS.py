@@ -220,8 +220,11 @@ class LINZDataset:
         self.fulldownload_directory = self.layer_data_directory / "full"
         self.last_updated_file = self.layer_data_directory / "last_updated.json"
         self.staging_fgb = self.layer_data_directory / self.staging_fgb_name
-        self.layer_feature_class = self.layer_data_directory / self.staging_fgb_name / f"layer_{self.layer_id}"
-        self.extent_featureclass = self.staging_fgb / "extent"
+        self.layer_feature_class = self.layer_data_directory / self.staging_fgb_name / f"layer_{self.layer_id}"        
+        if self.settings.get("extent_path"):
+            self.extent_featureclass = self.settings.get("extent_path")
+        else:
+            self.extent_featureclass = self.staging_fgb / "extent"
         
         self.poll_interval = self.settings.getint("poll_interval", 10)  #seconds
         self.max_polling_time = self.settings.getint("max_polling_time", 600) #seconds
@@ -961,8 +964,21 @@ class LINZDataset:
         if self.extent_geometry is not None:
             return self.extent_geometry
 
+        if str(self.extent_featureclass).lower().endswith("json"):
+            self.extent_featureclass = arcpy.conversion.JSONToFeatures(
+                in_json_file = str(self.extent_featureclass),
+                out_features = "memory\extent_fc"
+                )
+
+        desc = arcpy.da.Describe(str(self.extent_featureclass))
+        arcpy.env.workspace=desc.get("path")
+        extent_lyr = arcpy.management.MakeFeatureLayer(
+            in_features=desc.get("name"),
+            out_layer="extent_lyr"
+        )
+
         extent_records = [
-            row[0] for row in arcpy.da.SearchCursor(str(self.extent_featureclass), ["SHAPE@"])
+            row[0] for row in arcpy.da.SearchCursor(extent_lyr, ["SHAPE@"])
         ]
         if len(extent_records) == 0:
             self.extent_geometry = None
