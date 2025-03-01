@@ -5,7 +5,8 @@ Created: June 2024
 
 ## Purpose  
 This Python script simplifies the task of downloading LINZ vector datasets to an ArcGIS feature class and subsequently applying changesets.  
-This script is written to deliberately target the data available from the LINZ Data Service. 
+This script is written to deliberately target the data available from the LINZ Data Service.  
+The script is provided AS IS with no warantee, guarantee or support of any type. Use is entirely at your own risk.  
 
 ## Requirements  
 1. Python >3.x environment.  
@@ -25,9 +26,9 @@ The data ends up in a staging file geodatabase, and it is your responsibility to
 3. Make a copy of the template.cnf file in this directory and rename it settings.cnf.      
 5. Obtain a LINZ API key. Paste this into the settings.cnf file for the api_key property.  
 6. Look up the LINZ layer id and the name of the primary key field for the layer you wish to download. Add a new section to your settings.cnf using a file friendly name. Update with the layer id and id field.  
-7.  If you wish to set a spatial extent using a feature class, run using the --init argument first to create the data folder, staging file geodatabase and extent feature class without downloading anything. Add an extent polygon feature to this extent feature class using ArcGIS Pro. 
-8.  Run the following command: "run.bat --name **config_name** --download"  
-9.  Schedule the following command: "run.bat --name **config_name** --changeset --purge"    
+7. Optionally, add the path to a feature class, Esri json file or shape file in the settings.cnf for the extent_path to restrict the download to a polygon feature. 
+8. Run the following command: "run.bat --name **config_name** --download"  
+9. Schedule the following command: "run.bat --name **config_name** --changeset --purge"    
 
 ### Smoketest  
 1. Follow the basic installation steps above.
@@ -39,7 +40,7 @@ The data ends up in a staging file geodatabase, and it is your responsibility to
 7. Check there is a staging.gdb file geodatabase.
 8. Open the staging.gdb in ArcGIS Pro.
 9.  Check there is a feature class called "layer_xxxxxx" which contains the full download.
-10. Check there is a feature class called "layer_xxxxxx_changeset_xxxxxxx" which contains a changeset, if one was processed.
+10. Check there is a feature class called "layer_xxxxxx_changeset_xxxxxxx" which contains a changeset, if one has been processed.
 11. Check there is a polygon feature class called "extent". It will be empty at first.
 
 ### Directory Structure  
@@ -78,10 +79,11 @@ initial_buffer = 1000   # OPTIONAL: defaults to 1000
 poll_interval = 10      # OPTIONAL: defaults to 10
 max_polling_time = 600  # OPTIONAL: defaults to 600
 wkid = 2193             # OPTIONAL: defaults to 2193 (NZTM)
+extent_path =           # OPTIONAL: a polygon feature for the extent
 
 ``` 
  
->NOTE: Windows file paths should use double backslashes.
+>NOTE: Windows file paths should use double backslashes. Don't use quotation marks.
 
 - api_key - Required. A valid LINZ api key. This key must be manually scoped for "Query layer data", "Full access to tables and layers" and "Full access to data exports".
 - data_directory - Optional. A path to the data folder. Ensure that there is enough disk space in this location to hold the staging data and implement cleanup processes as necessary. Ensure the user account running the process has read and write access to this folder.    
@@ -89,8 +91,9 @@ wkid = 2193             # OPTIONAL: defaults to 2193 (NZTM)
 - retain_after_purge - When the --purge argument is used, the script will retain this number of full download zip files and changeset files and delete the rest. Defaults to 5.
 - initial_buffer - see the Extent section below. Defaults to 1000m.  
 - poll_interval - Optional. How long in seconds between polling LINZ to see if a requested export is ready for download. Defaults to 10 seconds. If this is a large dataset and you know it will always take a long time, there is no harm in leaving it at 10 seconds but there is also little point in polling every 10 seconds, so perhaps consider overriding this to 30 or 60 seconds for specific datasets.   
-- max_polling_time - Optional. How long in seconds the script will keep polling LINZ to see if a requested export is ready for download. Defaults to 600 seconds. Consider increasing this for large datasets.  
+- max_polling_time - Optional. How long in seconds the script will keep polling LINZ to see if a requested export is ready for download. Defaults to 600 seconds. Consider increasing this in the individual sections for large datasets.  
 - wkid - The ESPG well-known identifier. Defaults to 2193 (NZTM).  
+- extent_path - Optional. A path to either a feature class in a geodatabase, an Esri json file or a shape file. This should be a polygon geometry with just one record. The first record retrieved will be used as the extent for download, and only features intersecting the polygon will be in the final output. Refer the section below for more information on Extents.  
 
 ### Dataset sections  
 
@@ -115,17 +118,11 @@ id_field = t50_fid
 You can provide an extent and/or filters to narrow down the final output. Since we are using a combination of the LINZ Export API and WFS, there are some nuances to setting these up. The main one being to ensure you also include a sql filter if you specify a cql filter in the configuration if you wish to filter by attribute. See below for more information.  
 
 ### Extent
-After you add a section to the settings.cnf file, you can run the script once using the --init argument to create the staging file geodatabase. (If you don't intend to use the extent feature class, then you don't need to run with --init, as the first --download run will also create these anyway.)  
-```
-run.bat --name **config_name** --init
-```  
-The initial run will create a staging.gdb file geodatabase in the data directory, and will create a polygon feature class in it called "extent". The feature class will be in NZTM.  
-Use of this is optional. If no extent is created, then any download or changeset request will not apply any spatial filtering.  
-If you want to filter the data spatially, insert one record into this extent feature class.
+An **extent_path** can provided in the setting.cnf file, either in the default section and/or specifically in individual sections. This should be a path to a feature class in a geodatabase, an Esri json file or a shape file. An Esri json file is ideal because it involves just one text based file that can be easily copied. The geometry should be a polygon, and there should only be one record. The first record retrieved is used.  
 
-If a crop geometry is provided for a full data export then the LINZ API literally crops any features. This is not always desirable, for example it may result in clipped property title geometries which could be confusing. To get around this, during a full download, the extent geometry is buffered by the initial_buffer amount (defaults to 1000 meters) and the extent of that used, then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted. The 1000m buffer works most of the time, but in some fringe cases with extremely large polygons such as national parks this buffer will not be enough. If you know this to be the case, it is recommended to adjust your extent polygon to capture known areas. Otherwise you can also increase the initial_buffer size in the config.json.  
+If a crop geometry is provided for a full data export then the LINZ API literally crops any features. This is not always desirable, for example it may result in clipped property title geometries which could be confusing. To get around this, during a full download, the extent geometry is buffered by the initial_buffer amount (defaults to 1000 meters) and the extent of that used, then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted. The 1000m buffer works most of the time, but in some fringe cases with extremely large polygons such as national parks this buffer will not be enough. If you know this to be the case, it is recommended to adjust your extent polygon to capture known areas. Otherwise you can also increase the **initial_buffer** size in the config.json.  
 
-The LINZ WFS API works differently in that if a BBOX is specified it performs and intersect instead of cropping. The extent of the geometry is used as the BBOX, and then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted.  
+The LINZ WFS API works differently in that if a BBOX is specified it performs an intersect instead of cropping. The extent of the geometry is used as the BBOX, and then a select is run on the downloaded data and anything not intersecting the actual extent geometry is deleted.  
 
 ### SQL Filters
 The Export API doesn't appear to have an option for an attribute filter, only the extent crop. This means that the initial exported file geodatabase **always** includes all records within the extent. The WFS API accepts CQL and OGC filters, but cannot accept both a BBOX and a CQL filter at the same time. OGC filters are XML based. All this makes it hard to define one filter that can used in all requests and also easily converted to SQL for use in ArcPy if necessary too.    
@@ -188,6 +185,7 @@ If this happens, check the logs and you will see the export id noted at the time
 > 2024-06-29 13:11:15,794 - INFO - 488 - Export id is: 3534442  
  
 For very large datasets that may take a long time to generate, it is recommended that you use this resume option if possible rather than starting a new export request which would unnecessarily strain the LINZ servers.  
+If you identify a dataset that does take a long time, you can increase the maximum polling time by adding a **max_polling_time** in seconds for that section in the settings.cnf file.  
 ``` 
 run.bat --name nzproperty **--resume 3534442**  
 ``` 
@@ -244,3 +242,4 @@ This script was written with ArcGIS users in mind and relies on having ArcPy. Ha
 
 > Add ability to download plain tables. Currently it expects a spatial layer.  
 > Add a history table to the staging file geodatabase that populates whenever run. Currently you can browse the logs to see the history but it would be useful to see a simple summary in a table. Could have things like: datetime of update, number of adds, updates and deletes.  
+> Make the target geodatabase a parameter in the settings.cnf. Currently each layer has a separate staging file geodatabase and a separate process need to copy it elsewhere. But some users might prefer a single target file geodatabase, or an enterprise geodatabase.  
